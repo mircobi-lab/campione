@@ -1,0 +1,103 @@
+/*  Applicazione Standalone di Campione con lo stile MBStudio anche per finestra, menu e dialoghi.
+    - al primo avvio abilita tutti gli ingressi MIDI collegati (tastiere e controller);
+    - argomenti di prova: --sf2 FILE.sf2  --preset N  --shot FILE.png  (salva un'immagine del pannello ed esce)        */
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+#include <juce_audio_plugin_client/juce_audio_plugin_client.h>
+#include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+
+class CampioneStandaloneApp final : public juce::JUCEApplication
+{
+public:
+    CampioneStandaloneApp()
+    {
+        juce::PropertiesFile::Options o;
+        o.applicationName = juce::CharPointer_UTF8 (JucePlugin_Name);
+        o.filenameSuffix = ".settings";
+        o.osxLibrarySubFolder = "Application Support";
+       #if JUCE_LINUX || JUCE_BSD
+        o.folderName = "~/.config";
+       #endif
+        appProperties.setStorageParameters (o);
+    }
+
+    const juce::String getApplicationName() override     { return juce::CharPointer_UTF8 (JucePlugin_Name); }
+    const juce::String getApplicationVersion() override  { return JucePlugin_VersionString; }
+    bool moreThanOneInstanceAllowed() override           { return true; }
+    void anotherInstanceStarted (const juce::String&) override {}
+
+    void initialise (const juce::String& commandLine) override
+    {
+        auto* settings = appProperties.getUserSettings();
+        const bool firstRun = ! settings->containsKey ("campioneFirstRunDone");
+        settings->setValue ("campioneFirstRunDone", true);
+
+        juce::LookAndFeel::setDefaultLookAndFeel (&hardwareLook);
+        mainWindow = std::make_unique<juce::StandaloneFilterWindow> (getApplicationName(), mbstudio::ui::colours::chassisBottom,
+                                                                     settings, false);
+        if (firstRun)
+            for (auto& dev : juce::MidiInput::getAvailableDevices())
+                mainWindow->pluginHolder->deviceManager.setMidiInputDeviceEnabled (dev.identifier, true);
+        mainWindow->setVisible (true);
+        // profilo del controller scelto dal nome della porta MIDI (solo se non ci sono gia' assegnazioni)
+        if (auto* proc = dynamic_cast<CampioneProcessor*> (mainWindow->getAudioProcessor()))
+        {
+            juce::StringArray ports;
+            for (auto& dev : juce::MidiInput::getAvailableDevices())
+                if (mainWindow->pluginHolder->deviceManager.isMidiInputDeviceEnabled (dev.identifier)) ports.add (dev.name);
+            proc->midiMap.autoSelectFromPorts (ports);
+        }
+        applyCommandLine (commandLine);
+    }
+
+    void applyCommandLine (const juce::String& cmd)
+    {
+        auto args = juce::StringArray::fromTokens (cmd, true);
+        auto* proc = dynamic_cast<CampioneProcessor*> (mainWindow->getAudioProcessor());
+        if (proc == nullptr) return;
+        juce::String shot;
+        for (int i = 0; i + 1 < args.size(); ++i)
+        {
+            const auto a = args[i], v = args[i + 1].unquoted();
+            if (a == "--sf2") proc->loadSoundFont (juce::File (v));
+            else if (a == "--preset") proc->selectPreset (v.getIntValue() - 1);
+            else if (a == "--shot") shot = v;
+            else if (a == "--profile") proc->midiMap.applyProfile (v.getIntValue());
+            else if (a == "--learn") proc->midiMap.setLearnMode (true);
+        }
+        if (shot.isNotEmpty())
+            juce::Timer::callAfterDelay (1500, [this, shot]
+            {
+                if (auto* ed = mainWindow->getAudioProcessor()->getActiveEditor())
+                {
+                    auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.f);
+                    juce::File f (shot); f.deleteFile();
+                    if (auto os = f.createOutputStream()) juce::PNGImageFormat().writeImageToStream (img, *os);
+                }
+                systemRequestedQuit();
+            });
+    }
+
+    void shutdown() override
+    {
+        mainWindow = nullptr;
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+        appProperties.saveIfNeeded();
+    }
+
+    void systemRequestedQuit() override
+    {
+        if (mainWindow != nullptr) mainWindow->pluginHolder->savePluginState();
+        if (juce::ModalComponentManager::getInstance()->cancelAllModalComponents())
+            juce::Timer::callAfterDelay (100, [] { if (auto app = JUCEApplicationBase::getInstance()) app->systemRequestedQuit(); });
+        else
+            quit();
+    }
+
+private:
+    juce::ApplicationProperties appProperties;
+    mbstudio::ui::HardwareLookAndFeel hardwareLook;
+    std::unique_ptr<juce::StandaloneFilterWindow> mainWindow;
+};
+
+JUCE_CREATE_APPLICATION_DEFINE (CampioneStandaloneApp)
