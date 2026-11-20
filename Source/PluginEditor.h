@@ -17,7 +17,7 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
 
-    static constexpr int baseW = 1240, baseH = 480;
+    static constexpr int baseW = 1240, baseH = 514;
 
 private:
     enum class Kind { knob, combo, toggle, fader };
@@ -45,7 +45,13 @@ private:
     mbstudio::midi::MidiControls midiButtons;
     mbstudio::midi::MidiLearnOverlay midiOverlay;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> displayArea;
+    juce::Rectangle<int> displayArea, lcdArea;
+    // display LCD della sezione PIANO: nome del SoundFont, 16 caratteri, scorre se è più lungo
+    static constexpr int lcdChars = 16;
+    juce::String lcdText;
+    int lcdOffset = 0, lcdTicks = 0;
+    void updateLcd();
+    void paintLcd (juce::Graphics&);
     juce::String touched, touchedValue;
     juce::uint32 touchedMs = 0;
     int panicFlash = 0;

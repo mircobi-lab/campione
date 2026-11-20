@@ -7,7 +7,10 @@ using namespace campione;
 namespace
 {
 constexpr int margin = 14, lineY = 112, chipY = 124, cellY = 144, cellH = 88, knobW = 60, step = 64;
-constexpr int row2LabelY = 236, row2Y = 252, row2H = 28, footerY = 296, keyboardY = 318;
+constexpr int row2LabelY = 236, row2Y = 252, row2H = 28, footerY = 330, keyboardY = 352;
+constexpr int lcdY = 146, lcdH = 28, pianoShift = 36;      // la sezione PIANO scende sotto il display LCD
+constexpr int pianoCellY = cellY + pianoShift, pianoRow2Y = row2Y + pianoShift;
+const juce::Colour lcdBg (0xffc3c6be), lcdCell (0xffb4b7ae), lcdInk (0xff2a2c2a);
 
 const char* noteName (int n)
 {
@@ -28,11 +31,11 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
                  { "OUTPUT", {}, { 992, chipY, 234, 160 } } };
 
     // PIANO
-    add (Kind::knob, id::tone, "TONE").cell = { margin, cellY, knobW, cellH };
-    add (Kind::knob, id::tune, "TUNE").cell = { margin + step, cellY, knobW, cellH };
-    add (Kind::knob, id::transpose, "TRANSP").cell = { margin + 2 * step, cellY, knobW, cellH };
-    add (Kind::combo, id::a4ref, "A4 REF").cell = { margin, row2Y, 92, row2H };
-    add (Kind::combo, id::velCurve, "VEL CURVE").cell = { margin + 100, row2Y, 104, row2H };
+    add (Kind::knob, id::tone, "TONE").cell = { margin, pianoCellY, knobW, cellH };
+    add (Kind::knob, id::tune, "TUNE").cell = { margin + step, pianoCellY, knobW, cellH };
+    add (Kind::knob, id::transpose, "TRANSP").cell = { margin + 2 * step, pianoCellY, knobW, cellH };
+    add (Kind::combo, id::a4ref, "A4 REF").cell = { margin, pianoRow2Y, 92, row2H };
+    add (Kind::combo, id::velCurve, "VEL CURVE").cell = { margin + 100, pianoRow2Y, 104, row2H };
     // AMP ENVELOPE
     add (Kind::knob, id::attack, "ATTACK").cell = { 246, cellY, knobW, cellH };
     add (Kind::knob, id::decay, "DECAY").cell = { 246 + step, cellY, knobW, cellH };
@@ -89,7 +92,8 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     addAndMakeVisible (midiOverlay);     // per ultimo: sopra a tutto
 
     juce::Component::SafePointer<CampionePanel> safeThis (this);
-    proc.onSoundFontChanged = [safeThis] { juce::MessageManager::callAsync ([safeThis] { if (safeThis != nullptr) safeThis->repaint(); }); };
+    proc.onSoundFontChanged = [safeThis] { juce::MessageManager::callAsync ([safeThis] { if (safeThis != nullptr) { safeThis->updateLcd(); safeThis->repaint(); } }); };
+    updateLcd();
     setSize (baseW, baseH);
     startTimerHz (30);
 }
@@ -233,6 +237,7 @@ void CampionePanel::mouseDown (const juce::MouseEvent& e)
 void CampionePanel::resized()
 {
     displayArea = { 420, 14, 560, 90 };
+    lcdArea = { margin, lcdY, 210, lcdH };
     loadBtn.setBounds (994, 16, 108, 30);
     prevBtn.setBounds (1108, 16, 38, 30);
     nextBtn.setBounds (1152, 16, 38, 30);
@@ -354,6 +359,8 @@ void CampionePanel::paint (juce::Graphics& g)
         ui::paintEngravedLine (g, { a.getX() + cw + 4.f, a.getY() + 8.f }, { lineEnd, a.getY() + 8.f });
     }
 
+    paintLcd (g);
+
     // etichette e valori dei controlli
     for (auto& c : ctls)
     {
@@ -366,7 +373,7 @@ void CampionePanel::paint (juce::Graphics& g)
         }
         else if (c->kind == Kind::combo)
         {
-            ui::paintPrinted (g, { cell.getX(), (float) row2LabelY - 2.f, cell.getWidth() + 20.f, 14.f }, c->label, 12.f);
+            ui::paintPrinted (g, { cell.getX(), cell.getY() - (float) (row2Y - row2LabelY) - 2.f, cell.getWidth() + 20.f, 14.f }, c->label, 12.f);
         }
         else if (c->kind == Kind::fader)
         {
@@ -385,8 +392,63 @@ void CampionePanel::paint (juce::Graphics& g)
     ui::paintLogo (g, { (float) baseW - 260.f, (float) footerY, 246.f, 16.f }, false, ui::Imprint::debossed, juce::Justification::centredRight);
 }
 
+// ------------------------------------------------------------------------------------------------ display LCD
+void CampionePanel::updateLcd()
+{
+    juce::String t;
+    if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
+    else if (proc.engine.isLoaded()) t = proc.engine.currentFile().getFileNameWithoutExtension();
+    else t = "NO SOUNDFONT";
+    t = t.toUpperCase().retainCharacters (" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_");
+    if (t != lcdText) { lcdText = t; lcdOffset = 0; lcdTicks = 0; repaint (lcdArea); }
+}
+
+void CampionePanel::paintLcd (juce::Graphics& g)
+{
+    // cornice incassata, vetro grigio chiaro, 16 celle a matrice con i caratteri in grigio scuro
+    const auto outer = lcdArea.toFloat();
+    ui::paintRecess (g, outer);
+    const auto glass = outer.reduced (3.f);
+    g.setGradientFill (juce::ColourGradient (lcdBg.brighter (.06f), glass.getX(), glass.getY(), lcdBg.darker (.08f), glass.getX(), glass.getBottom(), false));
+    g.fillRoundedRectangle (glass, 2.f);
+    g.setColour (juce::Colours::black.withAlpha (.25f));
+    g.fillRect (glass.withHeight (1.5f));
+
+    const juce::String loop = lcdText.length() > lcdChars ? lcdText + "    " : lcdText;
+    const auto cells = glass.reduced (5.f, 3.f);
+    const float cw = cells.getWidth() / (float) lcdChars;
+    g.setFont (ui::Fonts::bold (17.f));
+    for (int i = 0; i < lcdChars; ++i)
+    {
+        const juce::Rectangle<float> c (cells.getX() + (float) i * cw, cells.getY(), cw - 1.5f, cells.getHeight());
+        g.setColour (lcdCell.withAlpha (.55f));
+        g.fillRect (c);
+        juce::juce_wchar ch = ' ';
+        if (loop.length() > lcdChars) ch = loop[(lcdOffset + i) % loop.length()];
+        else if (i < loop.length()) ch = loop[i];
+        if (ch != ' ')
+        {
+            g.setColour (lcdInk);
+            g.drawText (juce::String::charToString (ch), c.translated (0.f, 1.f), juce::Justification::centred, false);
+        }
+    }
+}
+
 void CampionePanel::timerCallback()
 {
+    updateLcd();
+    if (lcdText.length() > lcdChars)
+    {
+        // 1,5 s fermo all'inizio, poi un carattere ogni 0,3 s
+        ++lcdTicks;
+        const bool atStart = lcdOffset == 0;
+        if ((atStart && lcdTicks >= 45) || (! atStart && lcdTicks >= 9))
+        {
+            lcdTicks = 0;
+            lcdOffset = (lcdOffset + 1) % (lcdText.length() + 4);
+            repaint (lcdArea);
+        }
+    }
     meter.setLevel (std::pow (proc.outputLevel(), .5f));
     if (panicFlash > 0) --panicFlash;
     panicBtn.setToggleState (panicFlash > 0 && (panicFlash / 3) % 2 == 0, juce::dontSendNotification);
