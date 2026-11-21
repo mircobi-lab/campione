@@ -83,6 +83,12 @@ std::vector<SoundFontEngine::PresetInfo> SoundFontEngine::presets() const
     return presetList;
 }
 
+int SoundFontEngine::voicesOnKey (int key) const
+{
+    const juce::ScopedLock sl (fontLock);
+    return font != nullptr ? tsfaccess::voicesOnKey (font, key) : 0;
+}
+
 juce::File SoundFontEngine::currentFile() const
 {
     const juce::ScopedLock sl (fontLock);
@@ -148,6 +154,7 @@ void SoundFontEngine::handleMidi (const juce::MidiMessage& m, const EngineSettin
     {
         const int key = m.getNoteNumber() + s.transpose;
         if (key < 0 || key > 127) return;
+        tsfaccess::prepareNoteOn (font, 0, key, 24, .08f, .03f);
         tsf_channel_note_on (font, 0, key, shapeVelocity (m.getFloatVelocity(), s));
         lastKey.store (key);
     }

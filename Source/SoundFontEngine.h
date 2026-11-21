@@ -23,13 +23,15 @@ struct EngineSettings
 /*  Motore SoundFont 2 basato su TinySoundFont (MIT, third_party/TinySoundFont).
     - il file si carica sul thread dei messaggi (loadFile) e passa al thread audio sotto un lock;
       il thread audio usa un try-lock: durante il cambio file esce in silenzio, senza mai aspettare.
-    - 64 voci allocate al caricamento: nessuna allocazione nel thread audio.
+    - 256 voci allocate al caricamento: nessuna allocazione nel thread audio. Prima di ogni nota restano almeno
+      24 voci libere: le più vecchie si chiudono in 30 ms invece di essere troncate (niente click, niente note perse
+      col pedale premuto); un tasto colpito di nuovo chiude in 80 ms il suono precedente dello stesso tasto.
     - un solo canale MIDI interno: tutto il MIDI in ingresso suona il preset scelto.               */
 class SoundFontEngine
 {
 public:
     struct PresetInfo { juce::String name; int bank = 0, number = 0; };
-    static constexpr int maxVoices = 64;
+    static constexpr int maxVoices = 256;
 
     SoundFontEngine();
     ~SoundFontEngine();
@@ -53,6 +55,7 @@ public:
     bool pedalDown() const noexcept { return pedalState.load(); }
     bool softDown() const noexcept { return softState.load(); }
     bool isLoaded() const noexcept { return loaded.load(); }
+    int voicesOnKey (int key) const;                     // solo per le prove, prende il lock
 
 private:
     mutable juce::CriticalSection fontLock;        // protegge font, file, elenco preset, inviluppi

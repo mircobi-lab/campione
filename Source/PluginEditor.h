@@ -17,7 +17,7 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
 
-    static constexpr int baseW = 1240, baseH = 514;
+    static constexpr int baseW = 1240, baseH = 484;
 
 private:
     enum class Kind { knob, combo, toggle, fader };

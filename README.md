@@ -19,11 +19,11 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MBStudio91 Campion
 
 ## Come si usa
 
-Campione non contiene suoni: si carica un proprio file `.sf2` con **LOAD SF2** oppure trascinandolo sul pannello. Parte il preset banco 0 programma 0 (il pianoforte acustico nei SoundFont General MIDI), altrimenti il primo dell'elenco. Un clic sul display apre l'elenco dei preset, diviso per banco; `<` e `>` passano al precedente e al successivo. Il percorso del file e il preset vengono salvati nel progetto. Il display LCD sotto il titolo PIANO mostra il nome del file: se supera i 16 caratteri scorre.
+Campione non contiene suoni: si carica un proprio file `.sf2` con **LOAD SF2** oppure trascinandolo sul pannello. Parte il preset banco 0 programma 0 (il pianoforte acustico nei SoundFont General MIDI), altrimenti il primo dell'elenco. Un clic sul display apre l'elenco dei preset, diviso per banco; `<` e `>` passano al precedente e al successivo. Il percorso del file e il preset vengono salvati nel progetto. Il display LCD in alto a sinistra della sezione dei controlli mostra il nome del file in caratteri blu: se supera i 16 caratteri scorre.
 
 | Sezione | Controlli |
 |---|---|
-| PIANO | TONE (inclinazione ±9 dB, 250 Hz e 2,5 kHz), TUNE (±50 centesimi), TRANSP (±12 semitoni), A4 REF (440 o 432 Hz), VEL CURVE (NORMAL, SOFT, HARD, FIXED) |
+| PIANO (sotto il display LCD) | TONE (inclinazione ±9 dB, 250 Hz e 2,5 kHz), TUNE (±50 centesimi), TRANSP (±12 semitoni), A4 REF (440 o 432 Hz), VEL CURVE (NORMAL, SOFT, HARD, FIXED) |
 | AMP ENVELOPE | Con USE SF2 ENV acceso vale l'inviluppo del SoundFont. Spento, ATTACK, DECAY, SUSTAIN e RELEASE lo sostituiscono per le note nuove |
 | PEDAL | SUSTAIN (anche CC 64), SOFT una corda (anche CC 67), SOFT AMT quanto abbassa la dinamica |
 | ROOM | Riverbero: SIZE, DAMP, MIX, acceso o spento |
@@ -36,7 +36,7 @@ Altro dal MIDI: Program Change con banco da CC 0 e CC 32, pitch bend (±2 semito
 - Legge solo SoundFont 2 (`.sf2`). SFZ e SF3 non sono ancora supportati.
 - Il motore è TinySoundFont, che non applica i modulatori del SoundFont e ignora le mandate di chorus e riverbero scritte nel file. Il riverbero di Campione è la sezione ROOM.
 - Il mezzo pedale non è gestito: il sustain è acceso o spento.
-- 64 voci al massimo. Quando sono tutte occupate si libera la voce più avanti nel rilascio; se tutte le note sono ancora tenute, la nota nuova non suona.
+- 256 voci. Prima di ogni nota ne restano sempre almeno 24 libere: le più vecchie si chiudono con una dissolvenza di 30 ms, anche col pedale premuto. Un tasto colpito di nuovo chiude in 80 ms il suono precedente dello stesso tasto.
 
 ## Compilare in proprio
 
@@ -54,7 +54,7 @@ python3 tools/make_test_sf2.py prova.sf2
 ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav
 ```
 
-`make_test_sf2.py` crea un SoundFont con suoni sintetici; la prova controlla intonazione, trasposizione, 432 Hz, sustain da pannello e da CC 64, inviluppo sostituito e ripristinato, curva di velocity, pedale una corda, Program Change e PANIC. Gira anche su GitHub a ogni commit.
+`make_test_sf2.py` crea un SoundFont con suoni sintetici; la prova controlla intonazione, trasposizione, 432 Hz, sustain da pannello e da CC 64, inviluppo sostituito e ripristinato, curva di velocity, pedale una corda, Program Change, PANIC, 88 tasti col pedale premuto e una raffica di note senza click. Gira anche su GitHub a ogni commit.
 
 ## Licenze
 

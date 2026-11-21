@@ -7,10 +7,10 @@ using namespace campione;
 namespace
 {
 constexpr int margin = 14, lineY = 112, chipY = 124, cellY = 144, cellH = 88, knobW = 60, step = 64;
-constexpr int row2LabelY = 236, row2Y = 252, row2H = 28, footerY = 330, keyboardY = 352;
-constexpr int lcdY = 146, lcdH = 28, pianoShift = 36;      // la sezione PIANO scende sotto il display LCD
+constexpr int row2LabelY = 236, row2Y = 252, row2H = 28, footerY = 300, keyboardY = 322;
+constexpr int lcdY = 120, lcdH = 28, pianoShift = 10;      // in PIANO il display LCD prende il posto del titolo
 constexpr int pianoCellY = cellY + pianoShift, pianoRow2Y = row2Y + pianoShift;
-const juce::Colour lcdBg (0xffc3c6be), lcdCell (0xffb4b7ae), lcdInk (0xff2a2c2a);
+const juce::Colour lcdBg (0xffc3c6be), lcdCell (0xffb4b7ae);      // caratteri: blu LED (colours::ledBlue)
 
 const char* noteName (int n)
 {
@@ -24,8 +24,7 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     : proc (p), keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard),
       midiButtons (p.midiMap), midiOverlay (p.midiMap)
 {
-    sections = { { "PIANO", {}, { margin, chipY, 210, 160 } },
-                 { "AMP ENVELOPE", {}, { 246, chipY, 280, 160 } },
+    sections = { { "AMP ENVELOPE", {}, { 246, chipY, 280, 160 } },
                  { "PEDAL", {}, { 548, chipY, 190, 160 } },
                  { "ROOM", "GLOBAL", { 760, chipY, 210, 160 } },
                  { "OUTPUT", {}, { 992, chipY, 234, 160 } } };
@@ -268,7 +267,7 @@ void CampionePanel::paint (juce::Graphics& g)
     // marchio e sottotitolo
     ui::paintBrand (g, { 18.f, 16.f, 360.f, 34.f }, "CAMPIONE");
     ui::paintPrinted (g, { 18.f, 56.f, 390.f, 16.f }, "SOUNDFONT PIANO PLAYER  -  SF2", 14.f, juce::Justification::centredLeft, C::printDim);
-    ui::paintPrinted (g, { 18.f, 76.f, 390.f, 14.f }, "64 VOICES  -  SUSTAIN + SOFT PEDAL  -  ROOM", 11.f, juce::Justification::centredLeft, C::printDim.withAlpha (.7f));
+    ui::paintPrinted (g, { 18.f, 76.f, 390.f, 14.f }, "256 VOICES  -  SUSTAIN + SOFT PEDAL  -  ROOM", 11.f, juce::Justification::centredLeft, C::printDim.withAlpha (.7f));
 
     // display
     const auto d = displayArea.toFloat();
@@ -428,8 +427,13 @@ void CampionePanel::paintLcd (juce::Graphics& g)
         else if (i < loop.length()) ch = loop[i];
         if (ch != ' ')
         {
-            g.setColour (lcdInk);
-            g.drawText (juce::String::charToString (ch), c.translated (0.f, 1.f), juce::Justification::centred, false);
+            // carattere blu come i LED, con un alone leggero
+            const auto txt = juce::String::charToString (ch);
+            g.setColour (C::ledBlue.withAlpha (.28f));
+            for (auto o : { juce::Point<float> (-.8f, 0.f), juce::Point<float> (.8f, 0.f), juce::Point<float> (0.f, -.8f), juce::Point<float> (0.f, .8f) })
+                g.drawText (txt, c.translated (o.x, 1.f + o.y), juce::Justification::centred, false);
+            g.setColour (C::ledBlue);
+            g.drawText (txt, c.translated (0.f, 1.f), juce::Justification::centred, false);
         }
     }
 }

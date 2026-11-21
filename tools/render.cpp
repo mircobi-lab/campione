@@ -126,6 +126,46 @@ int main (int argc, char* argv[])
     play (e, {}, .01);
     check (e.currentPreset() == before, "selectPreset dal pannello");
 
+    // 88 tasti diversi col sustain premuto (organo in loop: le voci restano tutte occupate): l'ultima nota deve suonare
+    {
+        int organ = -1;
+        const auto list = e.presets();
+        for (size_t i = 0; i < list.size(); ++i) if (list[i].bank == 0 && list[i].number == 16) organ = (int) i;
+        if (organ < 0) organ = before;
+        e.selectPreset (organ);
+        std::vector<Event> evs { { 0.0, juce::MidiMessage::controllerEvent (1, 64, 127) } };
+        double t = .01;
+        for (int k = 21; k <= 108; ++k, t += .02) { evs.push_back ({ t, on (k, .7f) }); evs.push_back ({ t + .01, off (k) }); }
+        play (e, evs, t + .05);
+        check (e.voicesOnKey (108) > 0, "SUSTAIN + 88 tasti: suona anche l'ultimo, C8 (" + juce::String (e.activeVoices()) + " voci attive)");
+        e.requestPanic();
+        play (e, { { 0.0, juce::MidiMessage::controllerEvent (1, 64, 0) } }, .1);
+    }
+    // raffica: 160 note ogni 5 ms su tasti diversi, molte voci in rilascio da togliere: niente salti nel segnale
+    {
+        e.selectPreset (before);
+        std::vector<Event> evs;
+        double t = .01;
+        for (int i = 0; i < 160; ++i, t += .005) { const int k = 30 + (i * 13) % 70; evs.push_back ({ t, on (k, .9f) }); evs.push_back ({ t + .004, off (k) }); }
+        auto burst = play (e, evs, t + .3);
+        // click = salto di un campione molto più grande della variazione normale del segnale in quel punto
+        const auto* d = burst.getReadPointer (0);
+        float worst = 0.f;
+        const int w = 64;
+        for (int i = w; i < burst.getNumSamples() - w; ++i)
+        {
+            const float jump = std::abs (d[i] - 2.f * d[i - 1] + d[i - 2]);
+            float local = 0.f;
+            for (int j = i - w; j < i + w; j += 4) if (j != i) local = juce::jmax (local, std::abs (d[j] - 2.f * d[j - 1] + d[j - 2]));
+            if (local > 1e-4f) worst = juce::jmax (worst, jump / local);
+        }
+        check (worst < 2.5f, "raffica di note senza click: salto peggiore " + juce::String (worst, 2) + " volte la variazione vicina");
+        e.requestPanic();
+        play (e, {}, .1);
+        e.selectPreset (before);
+        play (e, {}, .01);
+    }
+
     // accordo in WAV
     if (argc > 2)
     {
