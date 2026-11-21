@@ -19,7 +19,7 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MBStudio91 Campion
 
 ## Come si usa
 
-Campione non contiene suoni: si carica un proprio file `.sf2` con **LOAD SF2** oppure trascinandolo sul pannello. Parte il preset banco 0 programma 0 (il pianoforte acustico nei SoundFont General MIDI), altrimenti il primo dell'elenco. Un clic sul display apre l'elenco dei preset, diviso per banco; `<` e `>` passano al precedente e al successivo. Il percorso del file e il preset vengono salvati nel progetto. Il display LCD in alto a sinistra della sezione dei controlli mostra il nome del file in caratteri blu: se supera i 16 caratteri scorre.
+Campione non contiene suoni: si carica un proprio file `.sf2` con **LOAD SF2** oppure trascinandolo sul pannello. Parte il preset banco 0 programma 0 (il pianoforte acustico nei SoundFont General MIDI), altrimenti il primo dell'elenco. Un clic sul display apre l'elenco dei preset, diviso per banco; `<` e `>` passano al precedente e al successivo. Il percorso del file e il preset vengono salvati nel progetto. Il display LCD in alto a sinistra della sezione dei controlli mostra il nome del file su una matrice di punti 5x7 in blu LED: se supera i 16 caratteri scorre.
 
 | Sezione | Controlli |
 |---|---|

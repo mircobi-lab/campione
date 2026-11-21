@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "LcdFont.h"
 
 namespace ui = mbstudio::ui;
 namespace C = mbstudio::ui::colours;
@@ -8,9 +9,9 @@ namespace
 {
 constexpr int margin = 14, lineY = 112, chipY = 124, cellY = 144, cellH = 88, knobW = 60, step = 64;
 constexpr int row2LabelY = 236, row2Y = 252, row2H = 28, footerY = 300, keyboardY = 322;
-constexpr int lcdY = 120, lcdH = 28, pianoShift = 10;      // in PIANO il display LCD prende il posto del titolo
+constexpr int lcdY = 120, lcdH = 25, lcdW = 210, pianoShift = 6;    // in alto a sinistra il display LCD a matrice
 constexpr int pianoCellY = cellY + pianoShift, pianoRow2Y = row2Y + pianoShift;
-const juce::Colour lcdBg (0xffc3c6be), lcdCell (0xffb4b7ae);      // caratteri: blu LED (colours::ledBlue)
+const juce::Colour lcdGlass (0xff07142e), lcdDotOff (0xff10285a);   // punti accesi: blu LED (colours::ledBlue)
 
 const char* noteName (int n)
 {
@@ -236,7 +237,7 @@ void CampionePanel::mouseDown (const juce::MouseEvent& e)
 void CampionePanel::resized()
 {
     displayArea = { 420, 14, 560, 90 };
-    lcdArea = { margin, lcdY, 210, lcdH };
+    lcdArea = { margin, lcdY, lcdW, lcdH };
     loadBtn.setBounds (994, 16, 108, 30);
     prevBtn.setBounds (1108, 16, 38, 30);
     nextBtn.setBounds (1152, 16, 38, 30);
@@ -398,43 +399,57 @@ void CampionePanel::updateLcd()
     if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
     else if (proc.engine.isLoaded()) t = proc.engine.currentFile().getFileNameWithoutExtension();
     else t = "NO SOUNDFONT";
-    t = t.toUpperCase().retainCharacters (" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_");
-    if (t != lcdText) { lcdText = t; lcdOffset = 0; lcdTicks = 0; repaint (lcdArea); }
+    // il font a matrice ha solo i caratteri ASCII: lettere accentate senza accento, il resto diventa '?'
+    static const juce::String from = juce::String::fromUTF8 ("\xc3\xa0\xc3\xa1\xc3\xa8\xc3\xa9\xc3\xac\xc3\xad\xc3\xb2\xc3\xb3\xc3\xb9\xc3\xba\xc3\x80\xc3\x88\xc3\x89\xc3\x8c\xc3\x92\xc3\x99\xc3\xb1\xc3\xa7\xc3\xbc\xc3\xb6\xc3\xa4");
+    static const juce::String to = "aaeeiioouuAEEIOUncuoa";
+    juce::String clean;
+    for (auto ch : t)
+    {
+        const int k = from.indexOfChar (ch);
+        if (k >= 0) ch = to[k];
+        clean += juce::String::charToString (ch >= 32 && ch <= 126 ? ch : (juce::juce_wchar) '?');
+    }
+    if (clean != lcdText) { lcdText = clean; lcdOffset = 0; lcdTicks = 0; repaint (lcdArea); }
 }
 
 void CampionePanel::paintLcd (juce::Graphics& g)
 {
-    // cornice incassata, vetro grigio chiaro, 16 celle a matrice con i caratteri in grigio scuro
+    // cornice incassata, vetro blu scuro, 16 caratteri a matrice 5x7: punti spenti blu scuro, accesi blu LED
     const auto outer = lcdArea.toFloat();
     ui::paintRecess (g, outer);
-    const auto glass = outer.reduced (3.f);
-    g.setGradientFill (juce::ColourGradient (lcdBg.brighter (.06f), glass.getX(), glass.getY(), lcdBg.darker (.08f), glass.getX(), glass.getBottom(), false));
+    const auto glass = outer.reduced (2.f);
+    g.setColour (lcdGlass);
     g.fillRoundedRectangle (glass, 2.f);
-    g.setColour (juce::Colours::black.withAlpha (.25f));
-    g.fillRect (glass.withHeight (1.5f));
 
     const juce::String loop = lcdText.length() > lcdChars ? lcdText + "    " : lcdText;
-    const auto cells = glass.reduced (5.f, 3.f);
-    const float cw = cells.getWidth() / (float) lcdChars;
-    g.setFont (ui::Fonts::bold (17.f));
+    const float pitch = juce::jmin ((glass.getWidth() - 6.f) / (float) (lcdChars * 6 - 1), (glass.getHeight() - 4.f) / 7.f);
+    const float dot = pitch * .8f;
+    const float textW = pitch * (float) (lcdChars * 6 - 1), textH = pitch * 7.f;
+    const float x0 = glass.getCentreX() - textW * .5f, y0 = glass.getCentreY() - textH * .5f;
+    const auto glow = C::ledBlue.withAlpha (.3f);
     for (int i = 0; i < lcdChars; ++i)
     {
-        const juce::Rectangle<float> c (cells.getX() + (float) i * cw, cells.getY(), cw - 1.5f, cells.getHeight());
-        g.setColour (lcdCell.withAlpha (.55f));
-        g.fillRect (c);
         juce::juce_wchar ch = ' ';
         if (loop.length() > lcdChars) ch = loop[(lcdOffset + i) % loop.length()];
         else if (i < loop.length()) ch = loop[i];
-        if (ch != ' ')
-        {
-            // carattere blu come i LED, con un alone leggero
-            const auto txt = juce::String::charToString (ch);
-            g.setColour (C::ledBlue.withAlpha (.28f));
-            for (auto o : { juce::Point<float> (-.8f, 0.f), juce::Point<float> (.8f, 0.f), juce::Point<float> (0.f, -.8f), juce::Point<float> (0.f, .8f) })
-                g.drawText (txt, c.translated (o.x, 1.f + o.y), juce::Justification::centred, false);
-            g.setColour (C::ledBlue);
-            g.drawText (txt, c.translated (0.f, 1.f), juce::Justification::centred, false);
-        }
+        const auto* cols = campione::lcdfont::glyph ((char32_t) ch);
+        for (int c = 0; c < 5; ++c)
+            for (int r = 0; r < 7; ++r)
+            {
+                const juce::Rectangle<float> d (x0 + (float) (i * 6 + c) * pitch, y0 + (float) r * pitch, dot, dot);
+                if ((cols[c] >> r) & 1)
+                {
+                    g.setColour (glow);
+                    g.fillRect (d.expanded (pitch * .22f));
+                    g.setColour (C::ledBlue);
+                    g.fillRect (d);
+                }
+                else
+                {
+                    g.setColour (lcdDotOff);
+                    g.fillRect (d);
+                }
+            }
     }
 }
 
