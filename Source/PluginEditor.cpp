@@ -9,7 +9,8 @@ namespace
 {
 constexpr int margin = 14, lineY = 112, chipY = 124, cellY = 144, cellH = 88, knobW = 60, step = 64;
 constexpr int row2LabelY = 236, row2Y = 252, row2H = 28, footerY = 300, keyboardY = 322;
-constexpr int lcdY = 120, lcdH = 25, lcdW = 210, pianoShift = 6;    // in alto a sinistra il display LCD a matrice
+constexpr int lcdY = chipY, lcdH = 16, lcdW = 136, pianoShift = 0;   // display LCD a matrice, alto come i titoli-chip
+constexpr float lcdPitch = 1.32f;                                    // passo dei punti: caratteri alti 9 px come il testo dei chip
 constexpr int pianoCellY = cellY + pianoShift, pianoRow2Y = row2Y + pianoShift;
 const juce::Colour lcdGlass (0xff07142e), lcdDotOff (0xff10285a);   // punti accesi: blu LED (colours::ledBlue)
 
@@ -417,14 +418,14 @@ void CampionePanel::paintLcd (juce::Graphics& g)
     // cornice incassata, vetro blu scuro, 16 caratteri a matrice 5x7: punti spenti blu scuro, accesi blu LED
     const auto outer = lcdArea.toFloat();
     ui::paintRecess (g, outer);
-    const auto glass = outer.reduced (2.f);
+    const auto glass = outer.reduced (1.5f);
     g.setColour (lcdGlass);
     g.fillRoundedRectangle (glass, 2.f);
 
     const juce::String loop = lcdText.length() > lcdChars ? lcdText + "    " : lcdText;
-    const float pitch = juce::jmin ((glass.getWidth() - 6.f) / (float) (lcdChars * 6 - 1), (glass.getHeight() - 4.f) / 7.f);
+    const float pitch = lcdPitch;
     const float dot = pitch * .8f;
-    const float textW = pitch * (float) (lcdChars * 6 - 1), textH = pitch * 7.f;
+    const float textW = pitch * (float) (lcdChars * 6 - 1), textH = pitch * 6.f + dot;
     const float x0 = glass.getCentreX() - textW * .5f, y0 = glass.getCentreY() - textH * .5f;
     const auto glow = C::ledBlue.withAlpha (.3f);
     for (int i = 0; i < lcdChars; ++i)
