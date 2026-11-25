@@ -12,13 +12,13 @@ CampioneProcessor::CampioneProcessor()
     tone = raw (id::tone); tune = raw (id::tune); transpose = raw (id::transpose); a4ref = raw (id::a4ref); velCurve = raw (id::velCurve);
     sf2Env = raw (id::sf2Env); attack = raw (id::attack); decay = raw (id::decay); sustain = raw (id::sustain); release = raw (id::release);
     pedal = raw (id::pedal); soft = raw (id::soft); softAmt = raw (id::softAmt);
-    roomOn = raw (id::roomOn); roomSize = raw (id::roomSize); roomDamp = raw (id::roomDamp); roomMix = raw (id::roomMix); volume = raw (id::volume);
+    roomOn = raw (id::roomOn); roomSize = raw (id::roomSize); roomDamp = raw (id::roomDamp); roomMix = raw (id::roomMix); volume = raw (id::volume); bankParam = raw (id::bank);
 
     // banchi per i profili dei controller: A suono, B inviluppo, C pedali e stanza, D uscita
     midiMap.setBanks ({ juce::StringArray { id::tone, id::tune, id::transpose, id::velCurve, id::softAmt, id::roomMix, id::roomSize, id::volume },
                         juce::StringArray { id::attack, id::decay, id::sustain, id::release, id::sf2Env, id::a4ref, id::roomDamp, id::roomOn },
                         juce::StringArray { id::pedal, id::soft, id::softAmt, id::roomOn, id::roomSize, id::roomDamp, id::roomMix, id::volume },
-                        juce::StringArray { id::volume, id::roomMix, id::tone, id::tune, id::attack, id::release, id::pedal, id::soft } });
+                        juce::StringArray { id::bank, id::volume, id::roomMix, id::tone, id::tune, id::release, id::pedal, id::soft } });
 }
 
 bool CampioneProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -30,7 +30,7 @@ bool CampioneProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void CampioneProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     sr = sampleRate;
-    engine.prepare (sampleRate, juce::jmax (samplesPerBlock, 32));
+    banks.prepare (sampleRate, juce::jmax (samplesPerBlock, 32));
     const juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) juce::jmax (samplesPerBlock, 32), 1 };
     for (int c = 0; c < 2; ++c)
     {
@@ -80,7 +80,7 @@ void CampioneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     s.softAmount = softAmt->load();
     s.sf2Envelope = sf2Env->load() > .5f;
     s.attack = attack->load(); s.decay = decay->load(); s.sustain = sustain->load(); s.release = release->load();
-    engine.render (buffer, midi, s);
+    banks.render (buffer, midi, activeBank(), s);
 
     const int chans = juce::jmin (2, buffer.getNumChannels());
 
@@ -144,35 +144,46 @@ void CampioneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     level.store (juce::jmax (peak, level.load() * .8f));
 }
 
-// ------------------------------------------------------------------------------------------------ SoundFont
-bool CampioneProcessor::loadSoundFont (const juce::File& f)
+// ------------------------------------------------------------------------------------------------ SoundFont e banchi
+bool CampioneProcessor::loadSoundFont (const juce::File& f, int bank)
 {
+    const int b = resolve (bank);
     juce::String err;
-    const bool ok = engine.loadFile (f, err);
-    error = ok ? juce::String() : err;
+    const bool ok = banks[b].loadFile (f, err);
+    errors[(size_t) b] = ok ? juce::String() : err;
     if (onSoundFontChanged) onSoundFontChanged();
     return ok;
 }
 
 void CampioneProcessor::selectPreset (int index)
 {
-    engine.selectPreset (index);
+    activeEngine().selectPreset (index);
 }
 
 void CampioneProcessor::stepPreset (int delta)
 {
-    const int count = (int) engine.presets().size();
+    auto& e = activeEngine();
+    const int count = (int) e.presets().size();
     if (count == 0) return;
-    const int cur = juce::jmax (0, engine.currentPreset());
-    engine.selectPreset ((cur + delta + count) % count);
+    const int cur = juce::jmax (0, e.currentPreset());
+    e.selectPreset ((cur + delta + count) % count);
+}
+
+void CampioneProcessor::setActiveBank (int b)
+{
+    if (auto* p = state.getParameter (id::bank))
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::jlimit (0, Banks::count - 1, b)));
 }
 
 // ------------------------------------------------------------------------------------------------ stato
 void CampioneProcessor::getStateInformation (juce::MemoryBlock& dest)
 {
     auto st = state.copyState();
-    st.setProperty ("soundfont", engine.currentFile().getFullPathName(), nullptr);
-    st.setProperty ("preset", engine.currentPreset(), nullptr);
+    for (int b = 0; b < Banks::count; ++b)
+    {
+        st.setProperty ("soundfont" + juce::String (b), banks[b].currentFile().getFullPathName(), nullptr);
+        st.setProperty ("preset" + juce::String (b), banks[b].currentPreset(), nullptr);
+    }
     st.removeChild (st.getChildWithName ("MIDIMAP"), nullptr);
     st.appendChild (midiMap.toValueTree(), nullptr);
     if (auto xml = st.createXml()) copyXmlToBinary (*xml, dest);
@@ -188,17 +199,33 @@ void CampioneProcessor::setStateInformation (const void* data, int size)
         midiMap.fromValueTree (mm);
         st.removeChild (mm, nullptr);
     }
-    const juce::String path = st.getProperty ("soundfont", {}).toString();
-    const int preset = (int) st.getProperty ("preset", -1);
-    state.replaceState (st);
-    if (path.isNotEmpty() && juce::File::isAbsolutePath (path))
+    // progetti della versione con un solo SoundFont: "soundfont" e "preset" vanno nel banco A
+    if (st.hasProperty ("soundfont") && ! st.hasProperty ("soundfont0"))
     {
-        const juce::File f (path);
-        if (f != engine.currentFile())
+        st.setProperty ("soundfont0", st.getProperty ("soundfont"), nullptr);
+        st.setProperty ("preset0", st.getProperty ("preset", -1), nullptr);
+    }
+    std::array<juce::String, Banks::count> paths;
+    std::array<int, Banks::count> presets {};
+    for (int b = 0; b < Banks::count; ++b)
+    {
+        paths[(size_t) b] = st.getProperty ("soundfont" + juce::String (b), {}).toString();
+        presets[(size_t) b] = (int) st.getProperty ("preset" + juce::String (b), -1);
+    }
+    state.replaceState (st);
+    for (int b = 0; b < Banks::count; ++b)
+    {
+        const auto& path = paths[(size_t) b];
+        if (path.isEmpty() || ! juce::File::isAbsolutePath (path))
         {
-            if (! loadSoundFont (f)) error = "MISSING: " + f.getFileName().toUpperCase();
+            if (banks[b].isLoaded()) banks[b].unload();
+            errors[(size_t) b] = {};
+            continue;
         }
-        if (preset >= 0) engine.selectPreset (preset);
+        const juce::File f (path);
+        if (f != banks[b].currentFile() && ! loadSoundFont (f, b))
+            errors[(size_t) b] = "MISSING: " + f.getFileName().toUpperCase();
+        if (presets[(size_t) b] >= 0) banks[b].selectPreset (presets[(size_t) b]);
     }
     if (onSoundFontChanged) onSoundFontChanged();
 }

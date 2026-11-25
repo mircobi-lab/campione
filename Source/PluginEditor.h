@@ -40,6 +40,7 @@ private:
     CampioneProcessor& proc;
     std::vector<std::unique_ptr<Ctl>> ctls;
     std::vector<Section> sections;
+    std::array<juce::TextButton, campione::Banks::count> bankBtns;
     juce::TextButton loadBtn { "LOAD" }, prevBtn { "<" }, nextBtn { ">" }, panicBtn { "PANIC" };
     mbstudio::ui::LedMeter meter { 14 };
     juce::MidiKeyboardComponent keyboard;
@@ -52,6 +53,7 @@ private:
     juce::String lcdText;
     int lcdOffset = 0, lcdTicks = 0;
     void updateLcd();
+    void updateBankButtons();
     void paintLcd (juce::Graphics&);
     juce::String touched, touchedValue;
     juce::uint32 touchedMs = 0;

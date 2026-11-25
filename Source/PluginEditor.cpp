@@ -73,6 +73,19 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
         touched = "PANIC"; touchedValue = "ALL NOTES OFF"; touchedMs = juce::Time::getMillisecondCounter();
     };
     for (auto* b : { &loadBtn, &prevBtn, &nextBtn, &panicBtn }) addAndMakeVisible (*b);
+
+    // banchi A, B, C, D: ognuno col suo SoundFont; il LED blu indica quello che suona
+    for (int i = 0; i < Banks::count; ++i)
+    {
+        auto& b = bankBtns[(size_t) i];
+        b.setButtonText (Banks::name (i));
+        b.getProperties().set ("led", true);
+        b.getProperties().set ("ledColour", "ff3d8bff");
+        b.onClick = [this, i] { proc.setActiveBank (i); updateBankButtons(); repaint(); };
+        mbstudio::midi::tag (b, id::bank);
+        addAndMakeVisible (b);
+    }
+    updateBankButtons();
     addAndMakeVisible (meter);
 
     keyboard.setColour (juce::MidiKeyboardComponent::whiteNoteColourId, juce::Colour (0xffdcdcd8));
@@ -97,7 +110,7 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     {
         if (safeThis == nullptr) return;
         // SFZ: avvisi della conversione (regioni saltate, campioni mancanti) per qualche secondo sul display
-        if (const auto notes = safeThis->proc.engine.lastLoadNotes(); ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
+        if (const auto notes = safeThis->proc.activeEngine().lastLoadNotes(); ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
         {
             safeThis->touched = "SFZ";
             safeThis->touchedValue = notes[0].toUpperCase();
@@ -176,7 +189,7 @@ CampionePanel::Ctl* CampionePanel::find (const char* pid)
 // ------------------------------------------------------------------------------------------------ SoundFont
 void CampionePanel::chooseFile()
 {
-    auto start = proc.engine.currentFile();
+    auto start = proc.activeEngine().currentFile();
     chooser = std::make_unique<juce::FileChooser> ("Load SoundFont", start.existsAsFile() ? start.getParentDirectory()
                                                                                         : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
                                                    "*.sf2;*.sf3;*.sfz;*.SF2;*.SF3;*.SFZ");
@@ -211,7 +224,7 @@ void CampionePanel::filesDropped (const juce::StringArray& files, int, int)
 
 void CampionePanel::showPresetMenu()
 {
-    const auto list = proc.engine.presets();
+    const auto list = proc.activeEngine().presets();
     if (list.empty()) { chooseFile(); return; }
     // ordine per banco e programma, un sottomenu per banco quando ce n'è più di uno
     std::vector<int> order ((size_t) list.size());
@@ -222,7 +235,7 @@ void CampionePanel::showPresetMenu()
         return x.bank != y.bank ? x.bank < y.bank : x.number < y.number;
     });
     juce::PopupMenu menu, bankMenu;
-    const int cur = proc.engine.currentPreset();
+    const int cur = proc.activeEngine().currentPreset();
     bool multiBank = false;
     for (auto& p : list) if (p.bank != list.front().bank) multiBank = true;
     int bank = -1;
@@ -256,6 +269,7 @@ void CampionePanel::resized()
 {
     displayArea = { 420, 14, 560, 90 };
     lcdArea = { margin, lcdY, lcdW, lcdH };
+    for (int i = 0; i < Banks::count; ++i) bankBtns[(size_t) i].setBounds (62 + i * 50, 76, 44, 24);
     loadBtn.setBounds (994, 16, 108, 30);
     prevBtn.setBounds (1108, 16, 38, 30);
     nextBtn.setBounds (1152, 16, 38, 30);
@@ -286,16 +300,16 @@ void CampionePanel::paint (juce::Graphics& g)
     // marchio e sottotitolo
     ui::paintBrand (g, { 18.f, 16.f, 360.f, 34.f }, "CAMPIONE");
     ui::paintPrinted (g, { 18.f, 56.f, 390.f, 16.f }, "SOUNDFONT PIANO PLAYER  -  SF2 SF3 SFZ", 14.f, juce::Justification::centredLeft, C::printDim);
-    ui::paintPrinted (g, { 18.f, 76.f, 390.f, 14.f }, "256 VOICES  -  SUSTAIN + SOFT PEDAL  -  ROOM", 11.f, juce::Justification::centredLeft, C::printDim.withAlpha (.7f));
+    ui::paintPrinted (g, { 18.f, 76.f, 44.f, 24.f }, "BANK", 12.f, juce::Justification::centredLeft);
 
     // display
     const auto d = displayArea.toFloat();
     ui::paintRecess (g, d);
     {
         const auto in = d.reduced (14.f, 9.f);
-        const auto list = proc.engine.presets();
-        const int cur = proc.engine.currentPreset();
-        const bool loaded = proc.engine.isLoaded() && cur >= 0 && cur < (int) list.size();
+        const auto list = proc.activeEngine().presets();
+        const int cur = proc.activeEngine().currentPreset();
+        const bool loaded = proc.activeEngine().isLoaded() && cur >= 0 && cur < (int) list.size();
         g.setColour (C::print);
         g.setFont (ui::Fonts::display (28.f));
         const juce::String title = loaded ? juce::String (cur + 1).paddedLeft ('0', 2) + "  " + list[(size_t) cur].name.toUpperCase()
@@ -323,7 +337,7 @@ void CampionePanel::paint (juce::Graphics& g)
         if (proc.lastError().isNotEmpty())
             line (row2, { { "ERROR", proc.lastError().toUpperCase() } });
         else if (loaded)
-            line (row2, { { "FILE", proc.engine.currentFile().getFileName().toUpperCase() },
+            line (row2, { { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() },
                           { "BANK", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) },
                           { "PROG", juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) } });
         else
@@ -334,8 +348,9 @@ void CampionePanel::paint (juce::Graphics& g)
             line (row3, { { touched, touchedValue } });
         else
         {
-            const int last = proc.engine.lastNote();
-            line (row3, { { "VOICES", juce::String (proc.engine.activeVoices()) + " / " + juce::String (SoundFontEngine::maxVoices) },
+            const int last = proc.activeEngine().lastNote();
+            line (row3, { { "BANK", Banks::name (proc.activeBank()) },
+                          { "VOICES", juce::String (proc.banks.totalVoices()) },
                           { "LAST", last >= 0 ? juce::String (noteName (last)) + juce::String (last / 12 - 1) : juce::String ("--") } });
         }
         // LED di stato a destra della terza riga
@@ -347,12 +362,12 @@ void CampionePanel::paint (juce::Graphics& g)
         };
         {
             // SUSTAIN: LED pieno a pedale giù, a metà luce col mezzo pedale
-            const float lv = proc.engine.pedalLevel();
+            const float lv = proc.activeEngine().pedalLevel();
             ui::paintLed (g, { d.getRight() - 128.f, row3.getCentreY() }, 3.f, C::ledGreen, lv);
             g.setColour (C::printDim); g.setFont (ui::Fonts::label (11.f));
             g.drawText (lv > .25f && lv < .75f ? "HALF" : "SUSTAIN", juce::Rectangle<float> (d.getRight() - 121.f, row3.getY(), 60.f, row3.getHeight()), juce::Justification::centredLeft, false);
         }
-        ledLabel (d.getRight() - 58.f, "SOFT", C::ledGreen, proc.engine.softDown());
+        ledLabel (d.getRight() - 58.f, "SOFT", C::ledGreen, proc.activeEngine().softDown());
         ui::paintLed (g, { d.getRight() - 14.f, d.getY() + 12.f }, 3.5f, C::ledGreen, juce::jmin (1.f, proc.outputLevel() * 3.f));
         ui::paintPrinted (g, { d.getRight() - 120.f, d.getY() + 8.f, 98.f, 14.f }, loaded ? "CLICK = PRESETS" : "", 11.f,
                           juce::Justification::centredRight, C::printDim.withAlpha (.6f));
@@ -421,7 +436,7 @@ void CampionePanel::updateLcd()
 {
     juce::String t;
     if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
-    else if (proc.engine.isLoaded()) t = proc.engine.currentFile().getFileNameWithoutExtension();
+    else if (proc.activeEngine().isLoaded()) t = proc.activeEngine().currentFile().getFileNameWithoutExtension();
     else t = "NO SOUNDFONT";
     // il font a matrice ha solo i caratteri ASCII: lettere accentate senza accento, il resto diventa '?'
     static const juce::String from = juce::String::fromUTF8 ("\xc3\xa0\xc3\xa1\xc3\xa8\xc3\xa9\xc3\xac\xc3\xad\xc3\xb2\xc3\xb3\xc3\xb9\xc3\xba\xc3\x80\xc3\x88\xc3\x89\xc3\x8c\xc3\x92\xc3\x99\xc3\xb1\xc3\xa7\xc3\xbc\xc3\xb6\xc3\xa4");
@@ -477,8 +492,25 @@ void CampionePanel::paintLcd (juce::Graphics& g)
     }
 }
 
+void CampionePanel::updateBankButtons()
+{
+    const int active = proc.activeBank();
+    for (int i = 0; i < Banks::count; ++i)
+    {
+        auto& b = bankBtns[(size_t) i];
+        const auto& e = proc.banks[i];
+        b.setToggleState (i == active, juce::dontSendNotification);
+        // banco vuoto: scritta spenta
+        const auto txt = e.isLoaded() ? C::print : C::printDim.withAlpha (.55f);
+        b.setColour (juce::TextButton::textColourOffId, txt);
+        b.setColour (juce::TextButton::textColourOnId, txt);
+        b.setTooltip ("BANK " + Banks::name (i) + ": " + (e.isLoaded() ? e.currentFile().getFileName() : juce::String ("vuoto, carica un .sf2")));
+    }
+}
+
 void CampionePanel::timerCallback()
 {
+    updateBankButtons();
     updateLcd();
     if (lcdText.length() > lcdChars)
     {

@@ -24,6 +24,7 @@ namespace id
     inline constexpr const char* roomDamp  = "ROOMDAMP";
     inline constexpr const char* roomMix   = "ROOMMIX";
     inline constexpr const char* volume    = "VOLUME";    // dB
+    inline constexpr const char* bank      = "BANK";      // banco attivo A, B, C, D
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout();

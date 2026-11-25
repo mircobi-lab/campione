@@ -61,6 +61,7 @@ target_sources(MBStudio91Campione PRIVATE
     Source/TsfAccess.cpp
     Source/SoundFontEngine.cpp
     Source/SfzToSf2.cpp
+    Source/Banks.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 target_include_directories(MBStudio91Campione PRIVATE third_party/TinySoundFont third_party/stb_vorbis)
@@ -93,7 +94,7 @@ target_link_libraries(MBStudio91Campione
 option(CAMPIONE_BUILD_TOOLS "Compila lo strumento di render di prova" OFF)
 if(CAMPIONE_BUILD_TOOLS)
     juce_add_console_app(campione_render PRODUCT_NAME "campione_render")
-    target_sources(campione_render PRIVATE tools/render.cpp Source/TsfAccess.cpp Source/SoundFontEngine.cpp Source/SfzToSf2.cpp)
+    target_sources(campione_render PRIVATE tools/render.cpp Source/TsfAccess.cpp Source/SoundFontEngine.cpp Source/SfzToSf2.cpp Source/Banks.cpp)
     target_include_directories(campione_render PRIVATE Source third_party/TinySoundFont third_party/stb_vorbis)
     target_compile_definitions(campione_render PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(campione_render PRIVATE juce::juce_audio_basics juce::juce_audio_formats PUBLIC juce::juce_recommended_config_flags)

@@ -1,7 +1,7 @@
 #pragma once
 #include "MBStudioMidi.h"
 #include "Params.h"
-#include "SoundFontEngine.h"
+#include "Banks.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
 
@@ -35,26 +35,29 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void*, int) override;
 
-    // ---- thread dei messaggi
-    bool loadSoundFont (const juce::File&);           // false: messaggio in lastError()
-    juce::String lastError() const { return error; }
+    // ---- thread dei messaggi (sempre sul banco attivo, se non indicato)
+    bool loadSoundFont (const juce::File&, int bank = -1);   // false: messaggio in lastError()
+    juce::String lastError (int bank = -1) const { return errors[(size_t) resolve (bank)]; }
     void selectPreset (int index);
     void stepPreset (int delta);
+    int activeBank() const noexcept { return juce::jlimit (0, campione::Banks::count - 1, (int) bankParam->load()); }
+    void setActiveBank (int b);
+    campione::SoundFontEngine& activeEngine() noexcept { return banks[activeBank()]; }
 
     float outputLevel() const noexcept { return level.load(); }
-    void requestPanic() noexcept { engine.requestPanic(); }   // MIDI PANIC, eseguito all'inizio del blocco audio
+    void requestPanic() noexcept { banks.requestPanic(); }    // MIDI PANIC su tutti i banchi, eseguito all'inizio del blocco audio
 
     juce::AudioProcessorValueTreeState state;
     juce::MidiKeyboardState keyboardState;
     mbstudio::midi::MidiMapper midiMap;               // MIDI Learn e profili controller
-    campione::SoundFontEngine engine;
+    campione::Banks banks;
     std::function<void()> onSoundFontChanged;         // per il pannello (thread dei messaggi)
 
 private:
     std::atomic<float>* tone = nullptr, *tune = nullptr, *transpose = nullptr, *a4ref = nullptr, *velCurve = nullptr,
                        *sf2Env = nullptr, *attack = nullptr, *decay = nullptr, *sustain = nullptr, *release = nullptr,
                        *pedal = nullptr, *soft = nullptr, *softAmt = nullptr,
-                       *roomOn = nullptr, *roomSize = nullptr, *roomDamp = nullptr, *roomMix = nullptr, *volume = nullptr;
+                       *roomOn = nullptr, *roomSize = nullptr, *roomDamp = nullptr, *roomMix = nullptr, *volume = nullptr, *bankParam = nullptr;
 
     using Filter = juce::dsp::IIR::Filter<float>;
     Filter lowShelf[2], highShelf[2];
@@ -65,7 +68,8 @@ private:
     juce::SmoothedValue<float> gain, wet;
     juce::AudioBuffer<float> dry;
     std::atomic<float> level { 0.f };
-    juce::String error;
+    std::array<juce::String, campione::Banks::count> errors;
+    int resolve (int bank) const noexcept { return bank >= 0 && bank < campione::Banks::count ? bank : activeBank(); }
 
     void updateTone (float t);
 

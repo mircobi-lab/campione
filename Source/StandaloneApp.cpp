@@ -1,6 +1,6 @@
 /*  Applicazione Standalone di Campione con lo stile MBStudio anche per finestra, menu e dialoghi.
     - al primo avvio abilita tutti gli ingressi MIDI collegati (tastiere e controller);
-    - argomenti di prova: --sf2 FILE.sf2  --preset N  --shot FILE.png  (salva un'immagine del pannello ed esce)        */
+    - argomenti di prova: --bank N  --sf2 FILE.sf2  --preset N  --shot FILE.png (in quest'ordine, ripetibili)  (salva un'immagine del pannello ed esce)        */
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <juce_audio_plugin_client/juce_audio_plugin_client.h>
@@ -59,7 +59,8 @@ public:
         for (int i = 0; i + 1 < args.size(); ++i)
         {
             const auto a = args[i], v = args[i + 1].unquoted();
-            if (a == "--sf2") proc->loadSoundFont (juce::File (v));
+            if (a == "--bank") proc->setActiveBank (v.getIntValue() - 1);
+            else if (a == "--sf2") proc->loadSoundFont (juce::File (v));
             else if (a == "--preset") proc->selectPreset (v.getIntValue() - 1);
             else if (a == "--shot") shot = v;
             else if (a == "--profile") proc->midiMap.applyProfile (v.getIntValue());

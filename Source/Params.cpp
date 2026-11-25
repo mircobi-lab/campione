@@ -68,6 +68,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     Range vol (-60.f, 6.f, .1f); vol.setSkewForCentre (-12.f);
     l.add (makeFloat (id::volume, "Volume", vol, -3.f, fmt (id::volume)));
+    l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id::bank, 1 }, "Bank", juce::StringArray { "A", "B", "C", "D" }, 0));
     return l;
 }
 }

@@ -1,6 +1,6 @@
 // Prova offline del motore di Campione: carica un SF2, controlla intonazione, pedale, inviluppo, cambi di programma e PANIC,
 // poi scrive un accordo in WAV. Uso: campione_render FILE.sf2 [uscita.wav]   (codice di uscita 0 = tutte le prove passate)
-#include "SoundFontEngine.h"
+#include "Banks.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
 using namespace campione;
@@ -169,6 +169,49 @@ int main (int argc, char* argv[])
         play (e, {}, .1);
         e.selectPreset (before);
         play (e, {}, .01);
+    }
+
+    // quattro banchi: A pianoforte, B organo dallo stesso file. Una nota partita in A si spegne in A anche dopo il cambio di banco
+    {
+        Banks banks;
+        banks.prepare (sr, block);
+        juce::String err2;
+        const auto sf = juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]);
+        check (banks[0].loadFile (sf, err2) && banks[1].loadFile (sf, err2), "banchi A e B caricati");
+        banks.prepare (sr, block);
+        int organIdx = 0;
+        const auto list = banks[1].presets();
+        for (size_t i = 0; i < list.size(); ++i) if (list[i].bank == 0 && list[i].number == 16) organIdx = (int) i;
+        banks[1].selectPreset (organIdx);
+        juce::AudioBuffer<float> buf (2, block);
+        auto run = [&] (std::vector<juce::MidiMessage> msgs, int active, int blocks)
+        {
+            for (int i = 0; i < blocks; ++i)
+            {
+                juce::MidiBuffer mb;
+                if (i == 0) for (auto& m : msgs) mb.addEvent (m, 0);
+                banks.render (buf, mb, active, {});
+            }
+        };
+        run ({ on (60) }, 0, 20);
+        check (banks[0].activeVoices() > 0 && banks[1].activeVoices() == 0, "nota nel banco A");
+        run ({ on (64) }, 1, 20);
+        check (banks[1].activeVoices() > 0, "cambio al banco B: la nota nuova suona nel banco B");
+        run ({ off (60) }, 1, 400);
+        check (banks[0].activeVoices() == 0, "nota del banco A spenta nel banco A dopo il cambio di banco");
+        check (banks[1].activeVoices() > 0, "il banco B continua a suonare");
+        run ({ juce::MidiMessage::controllerEvent (1, 64, 127) }, 1, 1);
+        check (banks[0].pedalDown() || ! banks[0].isLoaded(), "CC 64 arriva anche al banco A");
+        banks.requestPanic();
+        run ({ juce::MidiMessage::controllerEvent (1, 64, 0) }, 1, 20);
+        check (banks.totalVoices() == 0, "PANIC su tutti i banchi");
+        juce::AudioBuffer<float> big (2, block * 3);   // blocco dell'host più lungo di quello preparato
+        juce::MidiBuffer mb; mb.addEvent (on (67), block * 2);
+        banks.render (big, mb, 2, {});
+        check (banks.totalVoices() == 0, "banco C vuoto: la nota non suona e niente si rompe");
+        banks.render (big, mb, 0, {});
+        check (banks[0].activeVoices() > 0 && big.getMagnitude (0, block * 2) < 1e-6f && big.getMagnitude (block * 2, block) > 0.f,
+               "blocco lungo: la nota parte al punto giusto");
     }
 
     // altri formati: campione_render prova.sf2 accordo.wav prova.sf3 prova.sfz ...
