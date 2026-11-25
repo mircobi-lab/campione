@@ -1,6 +1,6 @@
 # MBStudio91 Campione
 
-Campione è un player SoundFont (SF2 e SF3) e SFZ pensato per il pianoforte, in formato VST3, AU (Mac) e applicazione autonoma. L'interfaccia segue lo stile hardware dei plugin MBStudio91 (MuMU, LA-91, ICX7): telaio nero, scritte bianche, colore solo nei LED.
+Campione è un player SoundFont (SF2 e SF3), SFZ e waveform Yamaha (Motif, MOXF, Montage, MODX) pensato per il pianoforte, in formato VST3, AU (Mac) e applicazione autonoma. L'interfaccia segue lo stile hardware dei plugin MBStudio91 (MuMU, LA-91, ICX7): telaio nero, scritte bianche, colore solo nei LED.
 
 ![Pannello di Campione](docs/pannello.png)
 
@@ -19,9 +19,38 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MBStudio91 Campion
 
 ## Come si usa
 
-Campione non contiene suoni: si carica un proprio file con **LOAD** oppure trascinandolo sul pannello. Formati: SoundFont 2 (`.sf2`), SoundFont compresso (`.sf3`, campioni Ogg Vorbis, come quelli di MuseScore) e SFZ (`.sfz` con la cartella dei suoi campioni WAV, AIFF, FLAC o OGG). Parte il preset banco 0 programma 0 (il pianoforte acustico nei SoundFont General MIDI), altrimenti il primo dell'elenco. Un clic sul display apre l'elenco dei preset, diviso per banco; `<` e `>` passano al precedente e al successivo. Il percorso del file e il preset vengono salvati nel progetto. Il display LCD in alto a sinistra della sezione dei controlli mostra il nome del file su una matrice di punti 5x7 in blu LED: se supera i 16 caratteri scorre.
+Campione non contiene suoni: si carica un proprio file con **LOAD** oppure trascinandolo sul pannello. Formati: SoundFont 2 (`.sf2`), SoundFont compresso (`.sf3`, campioni Ogg Vorbis, come quelli di MuseScore), SFZ (`.sfz` con la cartella dei suoi campioni WAV, AIFF, FLAC o OGG) e file Yamaha con waveform utente (vedi sotto). Parte il preset banco 0 programma 0 (il pianoforte acustico nei SoundFont General MIDI), altrimenti il primo dell'elenco. Un clic sul display apre l'elenco dei preset, diviso per banco; `<` e `>` passano al precedente e al successivo. Il percorso del file e il preset vengono salvati nel progetto. Il display LCD in alto a sinistra della sezione dei controlli mostra il nome del file su una matrice di punti 5x7 in blu LED: se supera i 16 caratteri scorre.
 
 Ci sono quattro banchi, **A B C D**, sotto il nome del prodotto. Ognuno ha il suo SoundFont e il suo preset: si sceglie il banco con il tasto, poi LOAD (o il trascinamento) carica il file in quel banco. Il LED blu indica il banco che suona; i banchi vuoti hanno la scritta spenta. Il cambio è istantaneo: tutti i file restano in memoria, e una nota partita in un banco finisce nel suo banco anche se nel frattempo si è passati a un altro. Pedali, pitch bend, CC 7, 10, 11, 120 e 123 arrivano a tutti i banchi; Program Change e scelta del banco MIDI (CC 0 e 32) solo a quello attivo. Pedali e mezzo pedale valgono per tutti i banchi. Il banco è anche un parametro (BANK), quindi si automatizza dalla DAW o si assegna con LEARN a un tasto o a una manopola del controller.
+
+### File Yamaha Motif e Montage
+
+LOAD apre anche i file dei sintetizzatori Yamaha con campioni utente:
+
+| Strumento | File |
+|---|---|
+| Motif XS | `.X0A` `.X0W` |
+| Motif XF | `.X3A` `.X3W` |
+| MOXF | `.X6A` `.X6W` |
+| Montage | `.X7U` `.X7L` `.X7A` |
+| MODX, MODX+ | `.X8U` `.X8L` `.X8A` |
+| Montage M, MODX M | `.Y2U` `.Y2L` |
+
+Ogni waveform utente del file diventa un preset con il suo nome (banco 0 programmi 0-127, poi banco 1 e così via) e ogni keybank una zona: tasti, velocity, nota base, intonazione, livello, pan, punto d'inizio e loop. Il display mostra per qualche secondo quante waveform sono state lette e cosa è stato saltato.
+
+**SAVE** scrive il suono del banco attivo come SoundFont 2 (`.sf2`), da usare in qualsiasi altro player o campionatore. Funziona per i file Yamaha e per gli SFZ; il pulsante rifà la conversione dal file originale, quindi il file originale deve essere ancora al suo posto.
+
+Cosa non arriva, perché non sta nel file o non è un campione:
+
+- le waveform di fabbrica: una Performance che usa i suoni interni dello strumento non ha campioni nel file, e se il file contiene solo quelle il display scrive `NO USER WAVEFORMS`
+- le parti FM-X
+- i parametri delle Performance (filtri, inviluppi, effetti, Motion Control, livelli delle parti): si convertono le waveform, non le Performance
+- le waveform cifrate (contenuti protetti venduti da Yamaha e partner) e quelle compresse: vengono saltate e contate sul display
+- i loop all'indietro diventano loop in avanti, perché il SoundFont 2 non ha il loop all'indietro
+
+Le waveform non hanno un inviluppo proprio: Campione dà a ogni zona un rilascio di 0,2 s per evitare il click al rilascio del tasto. Con USE SF2 ENV spento valgono le manopole dell'AMP ENVELOPE, come per gli altri formati.
+
+La lettura dei file Yamaha è scritta da zero per Campione. Il formato è documentato da Chris Webb ([github.com/arachsys/montage](https://github.com/arachsys/montage), `docs/files/structure.md`); la disposizione dei keybank per ogni modello e le conversioni di livello e intonazione vengono dal lettore YSFC di ConvertWithMoss di Jürgen Moßgraber ([github.com/git-moss/ConvertWithMoss](https://github.com/git-moss/ConvertWithMoss), LGPL v3). La prova automatica usa file Yamaha sintetici creati da `tools/make_test_ysfc.py`, non file salvati da uno strumento vero: la prima prova su un file reale va fatta a mano.
 
 | Sezione | Controlli |
 |---|---|
@@ -57,7 +86,7 @@ python3 tools/make_test_sf2.py prova.sf2
 ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav
 ```
 
-`make_test_sf2.py` crea un SoundFont con suoni sintetici; la prova controlla intonazione, trasposizione, 432 Hz, sustain da pannello e da CC 64, inviluppo sostituito e ripristinato, curva di velocity, pedale una corda, Program Change, PANIC, 88 tasti col pedale premuto, una raffica di note senza click e i quattro banchi (cambio di banco con note in corso, pedale a tutti i banchi, banco vuoto). Gira anche su GitHub a ogni commit.
+`make_test_sf2.py` crea un SoundFont con suoni sintetici, `make_test_ysfc.py` tre file Yamaha di prova (Montage, Motif XF, MOXF); la prova controlla intonazione, trasposizione, 432 Hz, sustain da pannello e da CC 64, inviluppo sostituito e ripristinato, curva di velocity, pedale una corda, Program Change, PANIC, 88 tasti col pedale premuto, una raffica di note senza click e i quattro banchi (cambio di banco con note in corso, pedale a tutti i banchi, banco vuoto) e la lettura dei file Yamaha con il salvataggio in `.sf2`. Gira anche su GitHub a ogni commit.
 
 ## Licenze
 

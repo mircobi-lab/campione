@@ -1,6 +1,7 @@
 #include "SoundFontEngine.h"
 #include "TsfAccess.h"
 #include "SfzToSf2.h"
+#include "YamahaToSf2.h"
 #include "tsf.h"
 
 namespace campione
@@ -22,13 +23,21 @@ bool SoundFontEngine::loadFile (const juce::File& f, juce::String& error)
         data = std::move (conv.sf2);
         notes = conv.notes;
     }
+    else if (ysfc::isYamahaFile (f))
+    {
+        // Motif / Montage / MODX: waveform utente convertite in un SoundFont 2 in memoria (YamahaToSf2.h)
+        auto conv = ysfc::convert (f);
+        if (conv.error.isNotEmpty()) { error = conv.error; return false; }
+        data = std::move (conv.sf2);
+        notes = conv.notes;
+    }
     else if (! f.loadFileAsData (data) || data.getSize() < 12) { error = "CANNOT READ FILE"; return false; }
     if (data.getSize() > (size_t) std::numeric_limits<int>::max()) { error = "FILE TOO LARGE"; return false; }
 
     // il file si prepara tutto qui, fuori dal lock: il thread audio continua a suonare il vecchio
     // (.sf3: i campioni Ogg Vorbis li decodifica TinySoundFont con stb_vorbis, vedi TsfAccess.cpp)
     tsf* fresh = tsf_load_memory (data.getData(), (int) data.getSize());
-    if (fresh == nullptr) { error = f.hasFileExtension ("sfz") ? "SFZ CONVERSION FAILED" : "NOT A VALID SOUNDFONT"; return false; }
+    if (fresh == nullptr) { error = f.hasFileExtension ("sfz") || ysfc::isYamahaFile (f) ? "CONVERSION FAILED" : "NOT A VALID SOUNDFONT"; return false; }
     if (tsf_get_presetcount (fresh) <= 0) { tsf_close (fresh); error = "NO PRESETS IN FILE"; return false; }
 
     tsf_set_output (fresh, TSF_STEREO_INTERLEAVED, (int) sampleRate, 0.f);

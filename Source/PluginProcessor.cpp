@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+#include "SfzToSf2.h"
+#include "YamahaToSf2.h"
 #include "PluginEditor.h"
 
 using namespace campione;
@@ -153,6 +155,36 @@ bool CampioneProcessor::loadSoundFont (const juce::File& f, int bank)
     errors[(size_t) b] = ok ? juce::String() : err;
     if (onSoundFontChanged) onSoundFontChanged();
     return ok;
+}
+
+bool CampioneProcessor::canSaveSf2() const
+{
+    const auto& e = banks[activeBank()];
+    const auto f = e.currentFile();
+    return e.isLoaded() && (f.hasFileExtension ("sfz") || campione::ysfc::isYamahaFile (f));
+}
+
+juce::String CampioneProcessor::saveSf2 (const juce::File& destination)
+{
+    const auto src = banks[activeBank()].currentFile();
+    if (! src.existsAsFile()) return "SOURCE FILE NOT FOUND";
+    // si rifà la conversione dal file originale: niente copia in più tenuta in memoria
+    juce::MemoryBlock sf2;
+    if (src.hasFileExtension ("sfz"))
+    {
+        auto r = campione::sfz::convert (src);
+        if (r.error.isNotEmpty()) return r.error;
+        sf2 = std::move (r.sf2);
+    }
+    else if (campione::ysfc::isYamahaFile (src))
+    {
+        auto r = campione::ysfc::convert (src);
+        if (r.error.isNotEmpty()) return r.error;
+        sf2 = std::move (r.sf2);
+    }
+    else return "NOTHING TO CONVERT";
+    if (! destination.replaceWithData (sf2.getData(), sf2.getSize())) return "CANNOT WRITE " + destination.getFileName().toUpperCase();
+    return {};
 }
 
 void CampioneProcessor::selectPreset (int index)

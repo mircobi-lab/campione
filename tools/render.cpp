@@ -1,6 +1,7 @@
 // Prova offline del motore di Campione: carica un SF2, controlla intonazione, pedale, inviluppo, cambi di programma e PANIC,
 // poi scrive un accordo in WAV. Uso: campione_render FILE.sf2 [uscita.wav]   (codice di uscita 0 = tutte le prove passate)
 #include "Banks.h"
+#include "YamahaToSf2.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
 using namespace campione;
@@ -245,6 +246,33 @@ int main (int argc, char* argv[])
             x.selectPreset (1);
             const auto org = play (x, { { 0.0, on (69) }, { 1.5, off (69) } }, 1.6);
             check (rms (org, 1.0, 1.4) > rms (org, .1, .4) * .5f, file.getFileName() + ": l'organo in loop continua oltre la fine del campione");
+            if (ysfc::isYamahaFile (file))
+            {
+                const auto name = file.getFileName();
+                const double f440y = pitch (org, 1.0, 1.4);
+                check (std::abs (f440y - 440.0) < 2.0, name + ": nel loop La4 a " + juce::String (f440y, 1) + " Hz (punti del loop giusti)");
+                check (org.getRMSLevel (0, (int) (.1 * sr), (int) (.3 * sr)) > org.getRMSLevel (1, (int) (.1 * sr), (int) (.3 * sr)) * 1.3f,
+                       name + ": waveform stereo, canale sinistro più forte come nel file");
+                const auto list = x.presets();
+                check (list.size() == 2 && list[0].name == "Test Piano" && list[1].name == "Test Organ",
+                       name + ": un preset per waveform, con il nome della waveform");
+                const auto notes = x.lastLoadNotes().joinIntoString (" | ");
+                if (file.hasFileExtension ("x7l"))
+                {
+                    check (notes.contains ("1 keybank cifrati saltati"), name + ": la waveform cifrata viene saltata");
+                    check (notes.contains ("2 performance non convertite"), name + ": le performance sono segnalate");
+                }
+                // SAVE SF2: il file scritto si ricarica e ha gli stessi preset
+                const auto conv = ysfc::convert (file);
+                const auto saved = file.withFileExtension ("converted.sf2");
+                check (conv.error.isEmpty() && saved.replaceWithData (conv.sf2.getData(), conv.sf2.getSize()), name + ": scrittura del .sf2");
+                SoundFontEngine y;
+                y.prepare (sr, block);
+                juce::String yerr;
+                check (y.loadFile (saved, yerr) && y.presets().size() == 2, name + ": il .sf2 salvato si ricarica con 2 preset" + (yerr.isEmpty() ? "" : " (" + yerr + ")"));
+                const auto again = play (y, { { 0.0, on (57) }, { .6, off (57) } }, 1.0);
+                check (std::abs (pitch (again, .1, .5) - 220.0) < 1.5, name + ": il .sf2 salvato suona come il file Yamaha");
+            }
         }
     }
 

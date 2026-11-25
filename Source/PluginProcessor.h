@@ -38,6 +38,9 @@ public:
     // ---- thread dei messaggi (sempre sul banco attivo, se non indicato)
     bool loadSoundFont (const juce::File&, int bank = -1);   // false: messaggio in lastError()
     juce::String lastError (int bank = -1) const { return errors[(size_t) resolve (bank)]; }
+    // SAVE SF2: il banco attivo, se viene da un file convertito (SFZ o Yamaha Motif/Montage), salvato come .sf2
+    bool canSaveSf2() const;
+    juce::String saveSf2 (const juce::File& destination);   // vuoto se è andato bene, altrimenti l'errore
     void selectPreset (int index);
     void stepPreset (int delta);
     int activeBank() const noexcept { return juce::jlimit (0, campione::Banks::count - 1, (int) bankParam->load()); }
