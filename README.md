@@ -23,6 +23,19 @@ Campione non contiene suoni: si carica un proprio file con **LOAD** oppure trasc
 
 Ci sono quattro banchi, **A B C D**, sotto il nome del prodotto. Ognuno ha il suo SoundFont e il suo preset: si sceglie il banco con il tasto, poi LOAD (o il trascinamento) carica il file in quel banco. Il LED blu indica il banco che suona; i banchi vuoti hanno la scritta spenta. Il cambio è istantaneo: tutti i file restano in memoria, e una nota partita in un banco finisce nel suo banco anche se nel frattempo si è passati a un altro. Pedali, pitch bend, CC 7, 10, 11, 120 e 123 arrivano a tutti i banchi; Program Change e scelta del banco MIDI (CC 0 e 32) solo a quello attivo. Pedali e mezzo pedale valgono per tutti i banchi. Il banco è anche un parametro (BANK), quindi si automatizza dalla DAW o si assegna con LEARN a un tasto o a una manopola del controller.
 
+### SoundFont multibanco GM e XG
+
+Un SoundFont General MIDI, GS o XG (per esempio GeneralUser GS, FluidR3 GM o un banco XG) si carica come gli altri. Con il tasto **GM/XG** acceso, accanto ai banchi, Campione funziona come un modulo GM a 16 canali:
+
+- ogni canale MIDI suona il suo programma, scelto con Program Change
+- il banco si sceglie con CC 0 (MSB) e CC 32 (LSB) prima del Program Change: varianti XG con MSB 0 e LSB = variante, varianti GS con MSB = variante, GM2 con MSB 121 e LSB = variante
+- il canale 10 suona la batteria (banco 128 del SoundFont); MSB 127 sceglie un kit XG su qualsiasi canale
+- se la variante chiesta non c'è nel file suona lo stesso programma del banco 0, come fanno i moduli GM
+- volume (CC 7), pan (CC 10), expression (CC 11), pitch bend, sustain e estensione del pitch bend (RPN 0) per canale
+- TRANSP non sposta la batteria
+
+Con GM/XG spento tutto il MIDI suona il preset scelto sul display, come prima; CC 0 e CC 32 seguono le stesse regole per scegliere le varianti. Il display mostra il preset del canale 1. Il mezzo pedale vale per il canale 1; sugli altri canali il CC 64 è acceso o spento.
+
 ### File Yamaha Motif e Montage
 
 LOAD apre anche i file dei sintetizzatori Yamaha con campioni utente:
@@ -45,7 +58,7 @@ Cosa non arriva, perché non sta nel file o non è un campione:
 - le waveform di fabbrica: una Performance che usa i suoni interni dello strumento non ha campioni nel file, e se il file contiene solo quelle il display scrive `NO USER WAVEFORMS`
 - le parti FM-X
 - i parametri delle Performance (filtri, inviluppi, effetti, Motion Control, livelli delle parti): si convertono le waveform, non le Performance
-- le waveform cifrate (contenuti protetti venduti da Yamaha e partner) e quelle compresse: vengono saltate e contate sul display
+- le waveform cifrate (contenuti protetti di Yamaha e dei partner, anche quelli gratuiti come Character Pianos) e quelle compresse: vengono saltate e contate sul display; se il file ha solo quelle il display scrive `PROTECTED YAMAHA CONTENT`
 - i loop all'indietro diventano loop in avanti, perché il SoundFont 2 non ha il loop all'indietro
 
 Le waveform non hanno un inviluppo proprio: Campione dà a ogni zona un rilascio di 0,2 s per evitare il click al rilascio del tasto. Con USE SF2 ENV spento valgono le manopole dell'AMP ENVELOPE, come per gli altri formati.
@@ -86,7 +99,7 @@ python3 tools/make_test_sf2.py prova.sf2
 ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav
 ```
 
-`make_test_sf2.py` crea un SoundFont con suoni sintetici, `make_test_ysfc.py` tre file Yamaha di prova (Montage, Motif XF, MOXF); la prova controlla intonazione, trasposizione, 432 Hz, sustain da pannello e da CC 64, inviluppo sostituito e ripristinato, curva di velocity, pedale una corda, Program Change, PANIC, 88 tasti col pedale premuto, una raffica di note senza click e i quattro banchi (cambio di banco con note in corso, pedale a tutti i banchi, banco vuoto) e la lettura dei file Yamaha con il salvataggio in `.sf2`. Gira anche su GitHub a ogni commit.
+`make_test_sf2.py` crea un SoundFont con suoni sintetici, `make_test_ysfc.py` tre file Yamaha di prova (Montage, Motif XF, MOXF), `make_test_gm.py` un SoundFont multibanco GM/XG/GS; la prova controlla intonazione, trasposizione, 432 Hz, sustain da pannello e da CC 64, inviluppo sostituito e ripristinato, curva di velocity, pedale una corda, Program Change, PANIC, 88 tasti col pedale premuto, una raffica di note senza click e i quattro banchi (cambio di banco con note in corso, pedale a tutti i banchi, banco vuoto) la lettura dei file Yamaha con il salvataggio in `.sf2` e il modo GM/XG (programmi per canale, varianti XG e GS, batteria sul canale 10). Gira anche su GitHub a ogni commit.
 
 ## Licenze
 

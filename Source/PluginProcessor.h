@@ -43,6 +43,7 @@ public:
     juce::String saveSf2 (const juce::File& destination);   // vuoto se è andato bene, altrimenti l'errore
     void selectPreset (int index);
     void stepPreset (int delta);
+    bool multiMode() const noexcept { return multiParam->load() > .5f; }
     int activeBank() const noexcept { return juce::jlimit (0, campione::Banks::count - 1, (int) bankParam->load()); }
     void setActiveBank (int b);
     campione::SoundFontEngine& activeEngine() noexcept { return banks[activeBank()]; }
@@ -60,7 +61,7 @@ private:
     std::atomic<float>* tone = nullptr, *tune = nullptr, *transpose = nullptr, *a4ref = nullptr, *velCurve = nullptr,
                        *sf2Env = nullptr, *attack = nullptr, *decay = nullptr, *sustain = nullptr, *release = nullptr,
                        *pedal = nullptr, *soft = nullptr, *softAmt = nullptr,
-                       *roomOn = nullptr, *roomSize = nullptr, *roomDamp = nullptr, *roomMix = nullptr, *volume = nullptr, *bankParam = nullptr;
+                       *roomOn = nullptr, *roomSize = nullptr, *roomDamp = nullptr, *roomMix = nullptr, *volume = nullptr, *bankParam = nullptr, *multiParam = nullptr;
 
     using Filter = juce::dsp::IIR::Filter<float>;
     Filter lowShelf[2], highShelf[2];

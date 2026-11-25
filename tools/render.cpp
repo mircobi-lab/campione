@@ -230,7 +230,55 @@ int main (int argc, char* argv[])
         const double f220 = pitch (lo, .1, .5);
         check (std::abs (f220 - 220.0) < 1.5, file.getFileName() + ": La3 a " + juce::String (f220, 1) + " Hz (atteso 220)");
         check (rms (lo, 1.6, 1.9) < rms (lo, .1, .5) * .05f, file.getFileName() + ": dopo il rilascio il suono si spegne");
-        if (file.hasFileExtension ("sfz"))
+        if (file.getFileName().startsWith ("prova_gm"))
+        {
+            // GM/XG: ogni canale il suo programma, banco da CC 0 / CC 32, canale 10 batteria
+            using MM = juce::MidiMessage;
+            EngineSettings gm; gm.multi = true;
+            auto hz = [&] (std::vector<Event> ev, int ch, const EngineSettings& st)
+            {
+                // le sinusoidi di prova sono in loop: prima di ogni misura si spegne tutto
+                std::vector<Event> all;
+                for (int c = 1; c <= 16; ++c) all.push_back ({ 0.0, MM::allSoundOff (c) });
+                ev.insert (ev.begin(), all.begin(), all.end());
+                ev.push_back ({ .05, MM::noteOn (ch, 69, .8f) });
+                return pitch (play (x, ev, .5, st), .15, .45);
+            };
+            auto near = [] (double f, double want) { return std::abs (f - want) < 2.5; };
+            double f = hz ({}, 1, gm);
+            check (near (f, 440), "GM/XG: canale 1 programma 0 a " + juce::String (f, 1) + " Hz (atteso 440)");
+            f = hz ({}, 10, gm);
+            check (near (f, 275), "GM/XG: canale 10 suona il kit di batteria, " + juce::String (f, 1) + " Hz (atteso 275)");
+            f = hz ({ { 0.0, MM::controllerEvent (2, 0, 0) }, { 0.0, MM::controllerEvent (2, 32, 1) }, { 0.0, MM::programChange (2, 0) } }, 2, gm);
+            check (near (f, 550), "GM/XG: variante XG (CC 32 = 1) a " + juce::String (f, 1) + " Hz (atteso 550)");
+            f = hz ({ { 0.0, MM::controllerEvent (3, 0, 8) }, { 0.0, MM::controllerEvent (3, 32, 0) }, { 0.0, MM::programChange (3, 0) } }, 3, gm);
+            check (near (f, 400), "GM/XG: variante GS (CC 0 = 8) a " + juce::String (f, 1) + " Hz (atteso 400)");
+            f = hz ({ { 0.0, MM::controllerEvent (4, 0, 0) }, { 0.0, MM::controllerEvent (4, 32, 5) }, { 0.0, MM::programChange (4, 0) } }, 4, gm);
+            check (near (f, 440), "GM/XG: variante assente, ripiego sul banco 0, " + juce::String (f, 1) + " Hz (atteso 440)");
+            f = hz ({ { 0.0, MM::controllerEvent (5, 0, 127) }, { 0.0, MM::programChange (5, 25) } }, 5, gm);
+            check (near (f, 880), "GM/XG: kit XG su un altro canale (CC 0 = 127, programma 25) a " + juce::String (f, 1) + " Hz (atteso 880)");
+            f = hz ({ { 0.0, MM::programChange (6, 1) } }, 6, gm);
+            check (near (f, 500), "GM/XG: Program Change 1 sul canale 6 a " + juce::String (f, 1) + " Hz (atteso 500)");
+            f = hz ({}, 1, gm);
+            check (near (f, 440), "GM/XG: il canale 1 non cambia per i Program Change degli altri canali");
+            EngineSettings gmT = gm; gmT.transpose = 12;
+            f = hz ({}, 10, gmT);
+            check (near (f, 275), "GM/XG: la batteria non si traspone (" + juce::String (f, 1) + " Hz)");
+            f = hz ({}, 7, gmT);
+            check (near (f, 880), "GM/XG: gli altri canali si traspongono (" + juce::String (f, 1) + " Hz, atteso 880)");
+            // due canali insieme: pianoforte e batteria suonano tutti e due
+            const auto both = play (x, { { .05, MM::noteOn (1, 69, .8f) }, { .05, MM::noteOn (10, 81, .8f) } }, .4, gm);
+            check (x.activeVoices() >= 2, "GM/XG: canale 1 e canale 10 suonano insieme (" + juce::String (x.activeVoices()) + " voci)");
+            juce::ignoreUnused (both);
+            // modo PIANO: tutto il MIDI va al preset scelto, anche il canale 10; la variante XG si sceglie col CC 32
+            EngineSettings piano;
+            play (x, { { 0.0, MM::allSoundOff (1) } }, .05, piano);
+            f = hz ({ { 0.0, MM::programChange (1, 0) } }, 10, piano);
+            check (near (f, 440), "PIANO: il canale 10 suona il preset scelto, non la batteria (" + juce::String (f, 1) + " Hz)");
+            f = hz ({ { 0.0, MM::controllerEvent (1, 0, 0) }, { 0.0, MM::controllerEvent (1, 32, 1) }, { 0.0, MM::programChange (1, 0) } }, 1, piano);
+            check (near (f, 550), "PIANO: Program Change con variante XG (CC 32 = 1) a " + juce::String (f, 1) + " Hz (atteso 550)");
+        }
+        else if (file.hasFileExtension ("sfz"))
         {
             // tasto 69: regione dell'organo stereo in loop; deve suonare ancora dopo la fine del campione (0,5 s)
             const auto hi = play (x, { { 0.0, on (69) }, { 1.5, off (69) } }, 1.6);

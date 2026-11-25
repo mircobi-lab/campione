@@ -23,6 +23,11 @@ int Banks::totalVoices() const noexcept
     return n;
 }
 
+static size_t noteSlot (const juce::MidiMessage& m)
+{
+    return (size_t) (juce::jlimit (0, 15, m.getChannel() - 1) * 128 + m.getNoteNumber());
+}
+
 void Banks::render (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, int active, const EngineSettings& s) noexcept
 {
     active = juce::jlimit (0, count - 1, active);
@@ -35,14 +40,14 @@ void Banks::render (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi,
         const int pos = meta.samplePosition;
         if (m.isNoteOn())
         {
-            noteBank[(size_t) m.getNoteNumber()] = active;
+            noteBank[noteSlot (m)] = active;
             midiFor[(size_t) active].addEvent (m, pos);
         }
         else if (m.isNoteOff())
         {
-            const int b = noteBank[(size_t) m.getNoteNumber()];
+            const int b = noteBank[noteSlot (m)];
             midiFor[(size_t) (b >= 0 ? b : active)].addEvent (m, pos);
-            noteBank[(size_t) m.getNoteNumber()] = -1;
+            noteBank[noteSlot (m)] = -1;
         }
         else if (m.isProgramChange() || (m.isController() && (m.getControllerNumber() == 0 || m.getControllerNumber() == 32)))
         {

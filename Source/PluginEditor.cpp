@@ -55,9 +55,15 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     add (Kind::toggle, id::roomOn, "ROOM").cell = { 760, row2Y, 84, row2H };
     // OUTPUT
     add (Kind::fader, id::volume, "VOLUME").cell = { 998, cellY, 50, 136 };
+    // GM/XG: accanto ai banchi, perché vale per il SoundFont multibanco caricato
+    add (Kind::toggle, id::multi, "GM/XG").cell = { 270, 76, 84, 24 };
 
     find (id::sf2Env)->button.getProperties().set ("ledColour", "ff3d8bff");
     find (id::roomOn)->button.getProperties().set ("ledColour", "ffffb020");
+    find (id::multi)->button.getProperties().set ("ledColour", "ff3d8bff");
+    find (id::multi)->button.setTooltip ("GM/XG: SoundFont multibanco come un modulo General MIDI. Ogni canale MIDI suona il suo programma "
+                                         "(Program Change con banco da CC 0 e CC 32, varianti XG e GS), il canale 10 suona la batteria (banco 128). "
+                                         "Spento: tutto il MIDI suona il preset scelto sul display.");
 
     loadBtn.setTooltip ("Carica un suono: SoundFont 2 (.sf2), SoundFont compresso (.sf3), SFZ (.sfz con la sua cartella di campioni) "
                         "o file Yamaha Motif, MOXF, Montage, MODX (.X0A .X3A .X6A .X7U .X7L .X8U .X8L .Y2L e simili: solo le waveform utente). "
@@ -369,9 +375,16 @@ void CampionePanel::paint (juce::Graphics& g)
         if (proc.lastError().isNotEmpty())
             line (row2, { { "ERROR", proc.lastError().toUpperCase() } });
         else if (loaded)
-            line (row2, { { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() },
-                          { "BANK", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) },
-                          { "PROG", juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) } });
+        {
+            if (proc.multiMode())
+                line (row2, { { "GM/XG", "16 CH  -  CH 10 DRUMS" },
+                              { "CH 1", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) + ":" + juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) },
+                              { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() } });
+            else
+                line (row2, { { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() },
+                              { "BANK", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) },
+                              { "PROG", juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) } });
+        }
         else
             line (row2, { { "", "CLICK LOAD OR DROP AN SF2, SF3, SFZ OR MOTIF / MONTAGE FILE" } });
 

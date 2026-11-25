@@ -14,7 +14,7 @@ CampioneProcessor::CampioneProcessor()
     tone = raw (id::tone); tune = raw (id::tune); transpose = raw (id::transpose); a4ref = raw (id::a4ref); velCurve = raw (id::velCurve);
     sf2Env = raw (id::sf2Env); attack = raw (id::attack); decay = raw (id::decay); sustain = raw (id::sustain); release = raw (id::release);
     pedal = raw (id::pedal); soft = raw (id::soft); softAmt = raw (id::softAmt);
-    roomOn = raw (id::roomOn); roomSize = raw (id::roomSize); roomDamp = raw (id::roomDamp); roomMix = raw (id::roomMix); volume = raw (id::volume); bankParam = raw (id::bank);
+    roomOn = raw (id::roomOn); roomSize = raw (id::roomSize); roomDamp = raw (id::roomDamp); roomMix = raw (id::roomMix); volume = raw (id::volume); bankParam = raw (id::bank); multiParam = raw (id::multi);
 
     // banchi per i profili dei controller: A suono, B inviluppo, C pedali e stanza, D uscita
     midiMap.setBanks ({ juce::StringArray { id::tone, id::tune, id::transpose, id::velCurve, id::softAmt, id::roomMix, id::roomSize, id::volume },
@@ -82,6 +82,7 @@ void CampioneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     s.softAmount = softAmt->load();
     s.sf2Envelope = sf2Env->load() > .5f;
     s.attack = attack->load(); s.decay = decay->load(); s.sustain = sustain->load(); s.release = release->load();
+    s.multi = multiParam->load() > .5f;
     banks.render (buffer, midi, activeBank(), s);
 
     const int chans = juce::jmin (2, buffer.getNumChannels());

@@ -6,6 +6,41 @@
 
 namespace campione
 {
+int findPreset (const tsf* f, int msb, int lsb, int program, bool drumChannel, bool& drum)
+{
+    drum = msb == 127 || msb == 126 || msb == 120 || (drumChannel && msb == 0);
+    if (drum)
+    {
+        // kit richiesto, poi il kit standard; se il file non ha batterie, il programma nei banchi normali
+        for (int b : { 128 + (msb == 126 ? 1 : 0), 128 })
+            if (const int i = tsf_get_presetindex (f, b, program); i >= 0) return i;
+        if (const int i = tsf_get_presetindex (f, 128, 0); i >= 0) return i;
+        drum = false;
+    }
+    int tries[3] = { 0, 0, 0 };
+    int n = 0;
+    if (msb == 0 || msb == 121) tries[n++] = lsb;                       // XG e GM2: variante nella LSB
+    else if (msb == 64) tries[n++] = 64;                                // XG SFX voice
+    else { if (lsb > 0) tries[n++] = msb * 128 + lsb; tries[n++] = msb; } // GS: variante nella MSB
+    tries[n++] = 0;                                                     // ripiego: banco 0 (GM)
+    for (int i = 0; i < n; ++i)
+        if (const int idx = tsf_get_presetindex (f, tries[i], program); idx >= 0) return idx;
+    return -1;
+}
+
+namespace
+{
+// 16 canali creati fuori dal thread audio: TinySoundFont li alloca alla prima chiamata
+void createChannels (tsf* f, int preset)
+{
+    for (int ch = SoundFontEngine::midiChannels - 1; ch >= 0; --ch)
+    {
+        tsf_channel_set_presetindex (f, ch, preset);
+        tsf_channel_set_pitchrange (f, ch, 2.f);
+    }
+}
+}
+
 SoundFontEngine::SoundFontEngine() = default;
 
 SoundFontEngine::~SoundFontEngine() { unload(); }
@@ -42,8 +77,7 @@ bool SoundFontEngine::loadFile (const juce::File& f, juce::String& error)
 
     tsf_set_output (fresh, TSF_STEREO_INTERLEAVED, (int) sampleRate, 0.f);
     if (! tsf_set_max_voices (fresh, maxVoices)) { tsf_close (fresh); error = "OUT OF MEMORY"; return false; }
-    tsf_channel_set_presetindex (fresh, 0, 0);       // crea il canale 0 (alloca qui, non nel thread audio)
-    tsf_channel_set_pitchrange (fresh, 0, 2.f);
+    createChannels (fresh, 0);                      // crea i 16 canali (alloca qui, non nel thread audio)
 
     std::vector<PresetInfo> list;
     for (int i = 0; i < tsf_get_presetcount (fresh); ++i)
@@ -73,6 +107,7 @@ bool SoundFontEngine::loadFile (const juce::File& f, juce::String& error)
         appliedPedal = false;
         envDirty = true;
         tsf_channel_set_presetindex (font, 0, first);
+        appliedMulti = -1;                          // i canali si sistemano al primo blocco audio
         presetIndex.store (first);
         pendingPreset.store (-1);
         loaded.store (true);
@@ -125,13 +160,37 @@ void SoundFontEngine::prepare (double sr, int maxBlockSize)
     {
         tsf_set_output (font, TSF_STEREO_INTERLEAVED, (int) sr, 0.f);
         tsf_reset (font);
-        tsf_channel_set_presetindex (font, 0, juce::jmax (0, presetIndex.load()));
+        createChannels (font, juce::jmax (0, presetIndex.load()));
     }
+    appliedMulti = -1;
     appliedPedal = false;
     appliedTuning = 1.0e9f;
 }
 
 // ------------------------------------------------------------------------------------------------ thread audio
+void SoundFontEngine::resetChannels (bool multi) noexcept
+{
+    // cambio di modo o file nuovo: tutto spento, controller azzerati; in GM/XG i canali partono dal
+    // programma 0 del banco 0 e il canale 10 dal kit di batteria standard
+    for (int ch = 0; ch < midiChannels; ++ch)
+    {
+        tsf_channel_sounds_off_all (font, ch);
+        tsf_channel_midi_control (font, ch, 121, 0);
+        tsf_channel_set_sustain (font, ch, 0);
+        bankMsb[(size_t) ch] = bankLsb[(size_t) ch] = 0;
+        drumCh[(size_t) ch] = false;
+        if (ch == 0) { tsf_channel_set_presetindex (font, 0, juce::jmax (0, presetIndex.load())); continue; }
+        bool drum = false;
+        const int idx = findPreset (font, 0, 0, 0, multi && ch == drumChannel, drum);
+        tsf_channel_set_presetindex (font, ch, idx >= 0 ? idx : juce::jmax (0, presetIndex.load()));
+        drumCh[(size_t) ch] = multi && drum;
+    }
+    pedalValue = 0;
+    appliedPedal = false;
+    appliedTuning = 1.0e9f;
+    appliedMulti = multi ? 1 : 0;
+}
+
 void SoundFontEngine::applyPresetIndex (int index) noexcept
 {
     if (font == nullptr || index < 0 || index >= tsf_get_presetcount (font)) return;
@@ -171,41 +230,49 @@ float SoundFontEngine::shapeVelocity (float v, const EngineSettings& s) const no
 
 void SoundFontEngine::handleMidi (const juce::MidiMessage& m, const EngineSettings& s) noexcept
 {
+    // PIANO: tutto il MIDI suona il preset scelto (canale interno 0). GM/XG: ogni canale MIDI il suo.
+    const int ch = s.multi ? juce::jlimit (0, midiChannels - 1, m.getChannel() - 1) : 0;
+    const auto c = (size_t) ch;
+    const int shift = s.multi && drumCh[c] ? 0 : s.transpose;   // la batteria non si traspone
     if (m.isNoteOn())
     {
-        const int key = m.getNoteNumber() + s.transpose;
+        const int key = m.getNoteNumber() + shift;
         if (key < 0 || key > 127) return;
-        tsfaccess::prepareNoteOn (font, 0, key, 24, .08f, .03f);
-        tsf_channel_note_on (font, 0, key, shapeVelocity (m.getFloatVelocity(), s));
+        tsfaccess::prepareNoteOn (font, ch, key, 24, .08f, .03f);
+        tsf_channel_note_on (font, ch, key, shapeVelocity (m.getFloatVelocity(), s));
         lastKey.store (key);
     }
     else if (m.isNoteOff())
     {
-        const int key = m.getNoteNumber() + s.transpose;
-        if (key >= 0 && key <= 127) tsf_channel_note_off (font, 0, key);
+        const int key = m.getNoteNumber() + shift;
+        if (key >= 0 && key <= 127) tsf_channel_note_off (font, ch, key);
     }
     else if (m.isController())
     {
         const int cc = m.getControllerNumber(), v = m.getControllerValue();
-        if (cc == 64) pedalValue = v;
+        if (cc == 64) { if (ch == 0) pedalValue = v; else tsf_channel_set_sustain (font, ch, v >= 64 ? 1 : 0); }
         else if (cc == 67) ccSoft = v >= 64;
-        else if (cc == 0) bankMsb = v;
-        else if (cc == 32) bankLsb = v;
-        else if (cc == 120) { tsf_channel_sounds_off_all (font, 0); pedalValue = 0; }
-        else if (cc == 123) tsf_channel_note_off_all (font, 0);
-        else if (cc == 7 || cc == 10 || cc == 11 || cc == 121) tsf_channel_midi_control (font, 0, cc, v);
+        else if (cc == 0) bankMsb[c] = v;
+        else if (cc == 32) bankLsb[c] = v;
+        else if (cc == 120) { tsf_channel_sounds_off_all (font, ch); if (ch == 0) pedalValue = 0; }
+        else if (cc == 123) tsf_channel_note_off_all (font, ch);
+        else if (cc == 121) { tsf_channel_midi_control (font, ch, cc, v); appliedTuning = 1.0e9f; }
+        else if (cc == 7 || cc == 10 || cc == 11
+                 || (s.multi && (cc == 6 || cc == 38 || cc == 98 || cc == 99 || cc == 100 || cc == 101)))   // RPN: estensione del pitch bend
+            tsf_channel_midi_control (font, ch, cc, v);
     }
     else if (m.isProgramChange())
     {
-        // banco dal CC 0 (MSB); se il preset non esiste in quel banco, prova il banco 0
-        int idx = tsf_get_presetindex (font, bankMsb * 128 + bankLsb, m.getProgramChangeNumber());
-        if (idx < 0) idx = tsf_get_presetindex (font, bankMsb, m.getProgramChangeNumber());
-        if (idx < 0) idx = tsf_get_presetindex (font, 0, m.getProgramChangeNumber());
-        if (idx >= 0) applyPresetIndex (idx);
+        bool drum = false;
+        const int idx = findPreset (font, bankMsb[c], bankLsb[c], m.getProgramChangeNumber(), s.multi && ch == drumChannel, drum);
+        if (idx < 0) return;
+        if (ch == 0) applyPresetIndex (idx);
+        else tsf_channel_set_presetindex (font, ch, idx);
+        drumCh[c] = s.multi && drum;
     }
     else if (m.isPitchWheel())
     {
-        tsf_channel_set_pitchwheel (font, 0, m.getPitchWheelValue());
+        tsf_channel_set_pitchwheel (font, ch, m.getPitchWheelValue());
     }
 }
 
@@ -242,14 +309,22 @@ void SoundFontEngine::render (juce::AudioBuffer<float>& out, const juce::MidiBuf
     if (panicRequested.exchange (false))
     {
         // PANIC: voci spente subito, pedali e pitch bend azzerati
-        tsf_channel_sounds_off_all (font, 0);
-        tsf_channel_set_sustain (font, 0, 0);
-        tsf_channel_set_pitchwheel (font, 0, 8192);
+        for (int ch = 0; ch < midiChannels; ++ch)
+        {
+            tsf_channel_sounds_off_all (font, ch);
+            tsf_channel_set_sustain (font, ch, 0);
+            tsf_channel_set_pitchwheel (font, ch, 8192);
+        }
         pedalValue = 0; ccSoft = false;
         appliedPedal = false;
     }
+    if (appliedMulti != (s.multi ? 1 : 0)) resetChannels (s.multi);
     if (const int p = pendingPreset.exchange (-1); p >= 0) applyPresetIndex (p);
-    if (! juce::exactlyEqual (s.tuningSemis, appliedTuning)) { tsf_channel_set_tuning (font, 0, s.tuningSemis); appliedTuning = s.tuningSemis; }
+    if (! juce::exactlyEqual (s.tuningSemis, appliedTuning))
+    {
+        for (int ch = 0; ch < midiChannels; ++ch) tsf_channel_set_tuning (font, ch, s.tuningSemis);
+        appliedTuning = s.tuningSemis;
+    }
     applyEnvelope (s);
 
     float* l = out.getWritePointer (0);

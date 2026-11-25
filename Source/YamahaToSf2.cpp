@@ -349,7 +349,7 @@ Result convert (const juce::File& file)
     res.skipped = encrypted + compressed + damaged;
     if (out.instrumentCount() == 0)
     {
-        if (encrypted > 0) res.error = "WAVEFORMS ARE ENCRYPTED (PROTECTED CONTENT)";
+        if (encrypted > 0) res.error = "PROTECTED YAMAHA CONTENT: WAVEFORMS ARE ENCRYPTED";
         else if (compressed > 0) res.error = "WAVEFORMS ARE COMPRESSED: NOT SUPPORTED";
         else res.error = "NO PLAYABLE WAVEFORMS IN FILE";
         return res;
