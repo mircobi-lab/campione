@@ -14,4 +14,6 @@ int voicesOnKey (const tsf*, int key);          // per le prove
 // e, se restano meno di minFree voci libere, le voci più vecchie. Così TinySoundFont non deve mai troncarne una di colpo.
 void prepareNoteOn (tsf*, int channel, int key, int minFree, float restrikeFade, float stealFade);
 void overrideEnvelopes (tsf*, float attack, float decay, float sustain, float release);
+// Mezzo pedale: le voci tenute dal pedale (tasto già lasciato) partono in rilascio con il tempo indicato.
+void dampHeld (tsf*, float seconds);
 }

@@ -60,9 +60,10 @@ target_sources(MBStudio91Campione PRIVATE
     Source/Params.cpp
     Source/TsfAccess.cpp
     Source/SoundFontEngine.cpp
+    Source/SfzToSf2.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
-target_include_directories(MBStudio91Campione PRIVATE third_party/TinySoundFont)
+target_include_directories(MBStudio91Campione PRIVATE third_party/TinySoundFont third_party/stb_vorbis)
 # codice di terze parti: niente avvisi dalle regole severe di JUCE
 set_source_files_properties(Source/TsfAccess.cpp PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
 
@@ -92,8 +93,8 @@ target_link_libraries(MBStudio91Campione
 option(CAMPIONE_BUILD_TOOLS "Compila lo strumento di render di prova" OFF)
 if(CAMPIONE_BUILD_TOOLS)
     juce_add_console_app(campione_render PRODUCT_NAME "campione_render")
-    target_sources(campione_render PRIVATE tools/render.cpp Source/TsfAccess.cpp Source/SoundFontEngine.cpp)
-    target_include_directories(campione_render PRIVATE Source third_party/TinySoundFont)
+    target_sources(campione_render PRIVATE tools/render.cpp Source/TsfAccess.cpp Source/SoundFontEngine.cpp Source/SfzToSf2.cpp)
+    target_include_directories(campione_render PRIVATE Source third_party/TinySoundFont third_party/stb_vorbis)
     target_compile_definitions(campione_render PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(campione_render PRIVATE juce::juce_audio_basics juce::juce_audio_formats PUBLIC juce::juce_recommended_config_flags)
 endif()

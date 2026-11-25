@@ -53,6 +53,9 @@ public:
     int activeVoices() const noexcept { return voices.load(); }
     int lastNote() const noexcept { return lastKey.load(); }
     bool pedalDown() const noexcept { return pedalState.load(); }
+    float pedalLevel() const noexcept { return pedalAmount.load(); }   // 0 su, 0,5 mezzo pedale, 1 giù
+    juce::StringArray lastLoadNotes() const { const juce::ScopedLock sl (fontLock); return loadNotes; }   // avvisi dell'ultimo SFZ
+    static constexpr int halfPedalLow = 24, halfPedalHigh = 100;
     bool softDown() const noexcept { return softState.load(); }
     bool isLoaded() const noexcept { return loaded.load(); }
     int voicesOnKey (int key) const;                     // solo per le prove, prende il lock
@@ -71,7 +74,10 @@ private:
     std::atomic<bool> panicRequested { false }, pedalState { false }, softState { false }, loaded { false };
 
     // stato del thread audio
-    bool ccPedal = false, ccSoft = false, appliedPedal = false;
+    int pedalValue = 0;             // ultimo CC 64 (0-127)
+    bool ccSoft = false, appliedPedal = false;
+    std::atomic<float> pedalAmount { 0.f };
+    juce::StringArray loadNotes;
     int bankMsb = 0, bankLsb = 0;
     float appliedTuning = 1.0e9f;
     struct EnvKey { bool sf2 = true; float a = -1, d = -1, s = -1, r = -1; bool operator!= (const EnvKey& o) const { return sf2 != o.sf2 || ! juce::exactlyEqual (a, o.a) || ! juce::exactlyEqual (d, o.d) || ! juce::exactlyEqual (s, o.s) || ! juce::exactlyEqual (r, o.r); } };
@@ -83,5 +89,6 @@ private:
     void handleMidi (const juce::MidiMessage&, const EngineSettings&) noexcept;
     float shapeVelocity (float v, const EngineSettings&) const noexcept;
     void renderSpan (float* l, float* r, int n) noexcept;
+    void applyPedal (const EngineSettings&) noexcept;
 };
 }

@@ -1,6 +1,8 @@
 // Implementazione di TinySoundFont (third_party/TinySoundFont/tsf.h, licenza MIT) e accesso alle sue regioni.
 // inviluppi e volume aggiornati ogni 16 campioni invece di 64: gradini più piccoli, niente "zip" sui rilasci brevi
 #define TSF_RENDER_EFFECTSAMPLEBLOCK 16
+// SF3 (campioni Ogg Vorbis): TinySoundFont li decodifica se stb_vorbis è incluso prima (third_party/stb_vorbis, pubblico dominio / MIT)
+#include "stb_vorbis.c"
 #define TSF_IMPLEMENTATION
 #include "tsf.h"
 #include "TsfAccess.h"
@@ -105,5 +107,14 @@ void overrideEnvelopes (tsf* f, float attack, float decay, float sustain, float 
             e.delay = 0; e.hold = 0; e.keynumToHold = 0; e.keynumToDecay = 0;
             e.attack = attack; e.decay = decay; e.sustain = sustain; e.release = release;
         }
+}
+
+void dampHeld (tsf* f, float seconds)
+{
+    for (int i = 0; i < f->voiceNum; ++i)
+    {
+        tsf_voice& v = f->voices[i];
+        if (v.playingPreset != -1 && v.heldSustain) fadeVoice (f, &v, seconds);   // fadeVoice azzera heldSustain: una volta sola
+    }
 }
 }

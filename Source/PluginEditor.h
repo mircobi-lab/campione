@@ -14,6 +14,7 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
 
+    static bool isSoundFile (const juce::String&);
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
 
@@ -39,7 +40,7 @@ private:
     CampioneProcessor& proc;
     std::vector<std::unique_ptr<Ctl>> ctls;
     std::vector<Section> sections;
-    juce::TextButton loadBtn { "LOAD SF2" }, prevBtn { "<" }, nextBtn { ">" }, panicBtn { "PANIC" };
+    juce::TextButton loadBtn { "LOAD" }, prevBtn { "<" }, nextBtn { ">" }, panicBtn { "PANIC" };
     mbstudio::ui::LedMeter meter { 14 };
     juce::MidiKeyboardComponent keyboard;
     mbstudio::midi::MidiControls midiButtons;

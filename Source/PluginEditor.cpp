@@ -58,7 +58,7 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     find (id::sf2Env)->button.getProperties().set ("ledColour", "ff3d8bff");
     find (id::roomOn)->button.getProperties().set ("ledColour", "ffffb020");
 
-    loadBtn.setTooltip ("Carica un file SoundFont 2 (.sf2). Puoi anche trascinarlo sul pannello.");
+    loadBtn.setTooltip ("Carica un suono: SoundFont 2 (.sf2), SoundFont compresso (.sf3) o SFZ (.sfz con la sua cartella di campioni). Puoi anche trascinarlo sul pannello.");
     loadBtn.onClick = [this] { chooseFile(); };
     prevBtn.onClick = [this] { proc.stepPreset (-1); };
     nextBtn.onClick = [this] { proc.stepPreset (1); };
@@ -93,7 +93,19 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     addAndMakeVisible (midiOverlay);     // per ultimo: sopra a tutto
 
     juce::Component::SafePointer<CampionePanel> safeThis (this);
-    proc.onSoundFontChanged = [safeThis] { juce::MessageManager::callAsync ([safeThis] { if (safeThis != nullptr) { safeThis->updateLcd(); safeThis->repaint(); } }); };
+    proc.onSoundFontChanged = [safeThis] { juce::MessageManager::callAsync ([safeThis]
+    {
+        if (safeThis == nullptr) return;
+        // SFZ: avvisi della conversione (regioni saltate, campioni mancanti) per qualche secondo sul display
+        if (const auto notes = safeThis->proc.engine.lastLoadNotes(); ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
+        {
+            safeThis->touched = "SFZ";
+            safeThis->touchedValue = notes[0].toUpperCase();
+            safeThis->touchedMs = juce::Time::getMillisecondCounter();
+        }
+        safeThis->updateLcd();
+        safeThis->repaint();
+    }); };
     updateLcd();
     setSize (baseW, baseH);
     startTimerHz (30);
@@ -167,7 +179,7 @@ void CampionePanel::chooseFile()
     auto start = proc.engine.currentFile();
     chooser = std::make_unique<juce::FileChooser> ("Load SoundFont", start.existsAsFile() ? start.getParentDirectory()
                                                                                         : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
-                                                   "*.sf2;*.SF2");
+                                                   "*.sf2;*.sf3;*.sfz;*.SF2;*.SF3;*.SFZ");
     juce::Component::SafePointer<CampionePanel> safeThis (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safeThis] (const juce::FileChooser& fc)
     {
@@ -178,9 +190,14 @@ void CampionePanel::chooseFile()
     });
 }
 
+bool CampionePanel::isSoundFile (const juce::String& f)
+{
+    return f.endsWithIgnoreCase (".sf2") || f.endsWithIgnoreCase (".sf3") || f.endsWithIgnoreCase (".sfz");
+}
+
 bool CampionePanel::isInterestedInFileDrag (const juce::StringArray& files)
 {
-    for (auto& f : files) if (f.endsWithIgnoreCase (".sf2")) return true;
+    for (auto& f : files) if (isSoundFile (f)) return true;
     return false;
 }
 
@@ -188,7 +205,7 @@ void CampionePanel::filesDropped (const juce::StringArray& files, int, int)
 {
     dragOver = false;
     for (auto& f : files)
-        if (f.endsWithIgnoreCase (".sf2")) { proc.loadSoundFont (juce::File (f)); break; }
+        if (isSoundFile (f)) { proc.loadSoundFont (juce::File (f)); break; }
     repaint();
 }
 
@@ -268,7 +285,7 @@ void CampionePanel::paint (juce::Graphics& g)
 
     // marchio e sottotitolo
     ui::paintBrand (g, { 18.f, 16.f, 360.f, 34.f }, "CAMPIONE");
-    ui::paintPrinted (g, { 18.f, 56.f, 390.f, 16.f }, "SOUNDFONT PIANO PLAYER  -  SF2", 14.f, juce::Justification::centredLeft, C::printDim);
+    ui::paintPrinted (g, { 18.f, 56.f, 390.f, 16.f }, "SOUNDFONT PIANO PLAYER  -  SF2 SF3 SFZ", 14.f, juce::Justification::centredLeft, C::printDim);
     ui::paintPrinted (g, { 18.f, 76.f, 390.f, 14.f }, "256 VOICES  -  SUSTAIN + SOFT PEDAL  -  ROOM", 11.f, juce::Justification::centredLeft, C::printDim.withAlpha (.7f));
 
     // display
@@ -310,7 +327,7 @@ void CampionePanel::paint (juce::Graphics& g)
                           { "BANK", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) },
                           { "PROG", juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) } });
         else
-            line (row2, { { "", "CLICK LOAD SF2 OR DROP A .SF2 FILE HERE" } });
+            line (row2, { { "", "CLICK LOAD OR DROP AN SF2, SF3 OR SFZ FILE HERE" } });
 
         const bool showTouched = touched.isNotEmpty() && juce::Time::getMillisecondCounter() - touchedMs < 2500;
         if (showTouched)
@@ -328,7 +345,13 @@ void CampionePanel::paint (juce::Graphics& g)
             g.setColour (C::printDim); g.setFont (ui::Fonts::label (11.f));
             g.drawText (t, juce::Rectangle<float> (x + 7.f, row3.getY(), 60.f, row3.getHeight()), juce::Justification::centredLeft, false);
         };
-        ledLabel (d.getRight() - 128.f, "SUSTAIN", C::ledGreen, proc.engine.pedalDown());
+        {
+            // SUSTAIN: LED pieno a pedale giù, a metà luce col mezzo pedale
+            const float lv = proc.engine.pedalLevel();
+            ui::paintLed (g, { d.getRight() - 128.f, row3.getCentreY() }, 3.f, C::ledGreen, lv);
+            g.setColour (C::printDim); g.setFont (ui::Fonts::label (11.f));
+            g.drawText (lv > .25f && lv < .75f ? "HALF" : "SUSTAIN", juce::Rectangle<float> (d.getRight() - 121.f, row3.getY(), 60.f, row3.getHeight()), juce::Justification::centredLeft, false);
+        }
         ledLabel (d.getRight() - 58.f, "SOFT", C::ledGreen, proc.engine.softDown());
         ui::paintLed (g, { d.getRight() - 14.f, d.getY() + 12.f }, 3.5f, C::ledGreen, juce::jmin (1.f, proc.outputLevel() * 3.f));
         ui::paintPrinted (g, { d.getRight() - 120.f, d.getY() + 8.f, 98.f, 14.f }, loaded ? "CLICK = PRESETS" : "", 11.f,

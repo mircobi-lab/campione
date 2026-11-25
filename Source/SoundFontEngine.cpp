@@ -1,5 +1,6 @@
 #include "SoundFontEngine.h"
 #include "TsfAccess.h"
+#include "SfzToSf2.h"
 #include "tsf.h"
 
 namespace campione
@@ -12,12 +13,22 @@ bool SoundFontEngine::loadFile (const juce::File& f, juce::String& error)
 {
     juce::MemoryBlock data;
     if (! f.existsAsFile()) { error = "FILE NOT FOUND"; return false; }
-    if (! f.loadFileAsData (data) || data.getSize() < 12) { error = "CANNOT READ FILE"; return false; }
+    juce::StringArray notes;
+    if (f.hasFileExtension ("sfz"))
+    {
+        // SFZ: convertito in un SoundFont 2 in memoria (SfzToSf2.h)
+        auto conv = sfz::convert (f);
+        if (conv.error.isNotEmpty()) { error = conv.error; return false; }
+        data = std::move (conv.sf2);
+        notes = conv.notes;
+    }
+    else if (! f.loadFileAsData (data) || data.getSize() < 12) { error = "CANNOT READ FILE"; return false; }
     if (data.getSize() > (size_t) std::numeric_limits<int>::max()) { error = "FILE TOO LARGE"; return false; }
 
     // il file si prepara tutto qui, fuori dal lock: il thread audio continua a suonare il vecchio
+    // (.sf3: i campioni Ogg Vorbis li decodifica TinySoundFont con stb_vorbis, vedi TsfAccess.cpp)
     tsf* fresh = tsf_load_memory (data.getData(), (int) data.getSize());
-    if (fresh == nullptr) { error = "NOT A VALID SF2 FILE"; return false; }
+    if (fresh == nullptr) { error = f.hasFileExtension ("sfz") ? "SFZ CONVERSION FAILED" : "NOT A VALID SOUNDFONT"; return false; }
     if (tsf_get_presetcount (fresh) <= 0) { tsf_close (fresh); error = "NO PRESETS IN FILE"; return false; }
 
     tsf_set_output (fresh, TSF_STEREO_INTERLEAVED, (int) sampleRate, 0.f);
@@ -48,6 +59,7 @@ bool SoundFontEngine::loadFile (const juce::File& f, juce::String& error)
         file = f;
         presetList = std::move (list);
         originalEnv = std::move (env);
+        loadNotes = notes;
         appliedTuning = 1.0e9f;
         appliedPedal = false;
         envDirty = true;
@@ -166,11 +178,11 @@ void SoundFontEngine::handleMidi (const juce::MidiMessage& m, const EngineSettin
     else if (m.isController())
     {
         const int cc = m.getControllerNumber(), v = m.getControllerValue();
-        if (cc == 64) ccPedal = v >= 64;
+        if (cc == 64) pedalValue = v;
         else if (cc == 67) ccSoft = v >= 64;
         else if (cc == 0) bankMsb = v;
         else if (cc == 32) bankLsb = v;
-        else if (cc == 120) { tsf_channel_sounds_off_all (font, 0); ccPedal = false; }
+        else if (cc == 120) { tsf_channel_sounds_off_all (font, 0); pedalValue = 0; }
         else if (cc == 123) tsf_channel_note_off_all (font, 0);
         else if (cc == 7 || cc == 10 || cc == 11 || cc == 121) tsf_channel_midi_control (font, 0, cc, v);
     }
@@ -186,6 +198,22 @@ void SoundFontEngine::handleMidi (const juce::MidiMessage& m, const EngineSettin
     {
         tsf_channel_set_pitchwheel (font, 0, m.getPitchWheelValue());
     }
+}
+
+void SoundFontEngine::applyPedal (const EngineSettings& s) noexcept
+{
+    // CC 64 continuo: sotto 24 pedale su, da 100 in su pedale giù del tutto; in mezzo mezzo pedale:
+    // le note tenute dal pedale si smorzano con un rilascio che va da 0,25 s (poco pedale) a 10 s (quasi tutto)
+    const bool full = s.pedalButton || pedalValue >= halfPedalHigh;
+    const bool half = ! full && pedalValue >= halfPedalLow;
+    const bool on = full || half;
+    if (on != appliedPedal) { tsf_channel_set_sustain (font, 0, on ? 1 : 0); appliedPedal = on; }
+    if (half)
+    {
+        const float x = (float) (pedalValue - halfPedalLow) / (float) (halfPedalHigh - halfPedalLow);
+        tsfaccess::dampHeld (font, .25f * std::pow (40.f, x));
+    }
+    pedalAmount.store (full ? 1.f : half ? .5f : 0.f);
 }
 
 void SoundFontEngine::renderSpan (float* l, float* r, int n) noexcept
@@ -208,7 +236,7 @@ void SoundFontEngine::render (juce::AudioBuffer<float>& out, const juce::MidiBuf
         tsf_channel_sounds_off_all (font, 0);
         tsf_channel_set_sustain (font, 0, 0);
         tsf_channel_set_pitchwheel (font, 0, 8192);
-        ccPedal = ccSoft = false;
+        pedalValue = 0; ccSoft = false;
         appliedPedal = false;
     }
     if (const int p = pendingPreset.exchange (-1); p >= 0) applyPresetIndex (p);
@@ -243,11 +271,9 @@ void SoundFontEngine::render (juce::AudioBuffer<float>& out, const juce::MidiBuf
         renderTo (pos, at);
         pos = at;
         handleMidi (meta.getMessage(), s);
-        const bool pedal = s.pedalButton || ccPedal;
-        if (pedal != appliedPedal) { tsf_channel_set_sustain (font, 0, pedal ? 1 : 0); appliedPedal = pedal; }
+        applyPedal (s);
     }
-    const bool pedal = s.pedalButton || ccPedal;
-    if (pedal != appliedPedal) { tsf_channel_set_sustain (font, 0, pedal ? 1 : 0); appliedPedal = pedal; }
+    applyPedal (s);
     renderTo (pos, total);
 
     voices.store (tsf_active_voice_count (font));

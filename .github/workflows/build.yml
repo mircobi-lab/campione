@@ -19,15 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Librerie di sistema per JUCE
-        run: sudo apt-get update -q && sudo apt-get install -y -q libfreetype-dev libfontconfig1-dev libasound2-dev
+        run: sudo apt-get update -q && sudo apt-get install -y -q libfreetype-dev libfontconfig1-dev libasound2-dev vorbis-tools
       - name: Configura
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCAMPIONE_BUILD_TOOLS=ON
       - name: Compila lo strumento di prova
         run: cmake --build build --target campione_render -j4
-      - name: SoundFont di prova e controlli (intonazione, pedali, inviluppo, PANIC)
+      - name: SoundFont di prova e controlli (intonazione, pedali e mezzo pedale, inviluppo, PANIC, SF3, SFZ)
         run: |
           python3 tools/make_test_sf2.py prova.sf2
-          ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav
+          python3 tools/make_test_formats.py .
+          ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav prova.sf3 prova_sfz/prova.sfz
 
   mac:
     name: macOS universale

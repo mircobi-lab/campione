@@ -93,6 +93,11 @@ int main (int argc, char* argv[])
     const float cc = rms (play (e, { { 0.0, juce::MidiMessage::controllerEvent (1, 64, 127) }, { 0.0, on (60) }, { .2, off (60) } }, 1.4), 1.0, 1.2);
     check (cc > dry * 4.f + 1e-5f, "SUSTAIN dal CC 64: " + juce::String (cc, 5));
     play (e, { { 0.0, juce::MidiMessage::controllerEvent (1, 64, 0) } }, .1);   // pedale su
+    // mezzo pedale (CC 64 = 62): la nota tenuta si smorza, più del pedale pieno e meno del pedale su
+    const float halfP = rms (play (e, { { 0.0, juce::MidiMessage::controllerEvent (1, 64, 62) }, { 0.0, on (60) }, { .2, off (60) } }, 1.4), 1.0, 1.2);
+    check (halfP > dry * 1.5f + 1e-6f && halfP < held * .8f, "MEZZO PEDALE: " + juce::String (halfP, 5) + " fra pedale su " + juce::String (dry, 5) + " e giù " + juce::String (held, 5));
+    check (std::abs (e.pedalLevel() - .5f) < .01f, "LED SUSTAIN a metà col mezzo pedale");
+    play (e, { { 0.0, juce::MidiMessage::controllerEvent (1, 64, 0) } }, .1);
 
     // inviluppo sostituito: rilascio di 10 ms contro quello del SoundFont
     EngineSettings env; env.sf2Envelope = false; env.attack = 0.f; env.decay = 5.f; env.sustain = 1.f; env.release = .01f;
@@ -164,6 +169,40 @@ int main (int argc, char* argv[])
         play (e, {}, .1);
         e.selectPreset (before);
         play (e, {}, .01);
+    }
+
+    // altri formati: campione_render prova.sf2 accordo.wav prova.sf3 prova.sfz ...
+    for (int a = 3; a < argc; ++a)
+    {
+        SoundFontEngine x;
+        x.prepare (sr, block);
+        juce::String xerr;
+        const auto file = juce::File::getCurrentWorkingDirectory().getChildFile (argv[a]);
+        const bool xok = x.loadFile (file, xerr);
+        check (xok, "caricamento " + file.getFileName() + (xok ? "" : " (" + xerr + ")"));
+        if (! xok) continue;
+        for (auto& n : x.lastLoadNotes()) std::cout << "    nota: " << n << std::endl;
+        const auto lo = play (x, { { 0.0, on (57) }, { .6, off (57) } }, 2.0);
+        const double f220 = pitch (lo, .1, .5);
+        check (std::abs (f220 - 220.0) < 1.5, file.getFileName() + ": La3 a " + juce::String (f220, 1) + " Hz (atteso 220)");
+        check (rms (lo, 1.6, 1.9) < rms (lo, .1, .5) * .05f, file.getFileName() + ": dopo il rilascio il suono si spegne");
+        if (file.hasFileExtension ("sfz"))
+        {
+            // tasto 69: regione dell'organo stereo in loop; deve suonare ancora dopo la fine del campione (0,5 s)
+            const auto hi = play (x, { { 0.0, on (69) }, { 1.5, off (69) } }, 1.6);
+            const double f440x = pitch (hi, .1, .4);
+            check (std::abs (f440x - 440.0) < 2.0, "sfz: La4 a " + juce::String (f440x, 1) + " Hz");
+            check (rms (hi, 1.0, 1.4) > rms (hi, .1, .4) * .5f, "sfz: il loop continua oltre la fine del campione");
+            check (hi.getRMSLevel (0, (int) (.1 * sr), (int) (.3 * sr)) > hi.getRMSLevel (1, (int) (.1 * sr), (int) (.3 * sr)) * 1.1f,
+                   "sfz: campione stereo, canale sinistro più forte come nel file");
+            check (x.lastLoadNotes().joinIntoString (" ").contains ("1 regioni saltate"), "sfz: la regione trigger=release viene saltata");
+        }
+        else
+        {
+            x.selectPreset (1);
+            const auto org = play (x, { { 0.0, on (69) }, { 1.5, off (69) } }, 1.6);
+            check (rms (org, 1.0, 1.4) > rms (org, .1, .4) * .5f, file.getFileName() + ": l'organo in loop continua oltre la fine del campione");
+        }
     }
 
     // accordo in WAV
