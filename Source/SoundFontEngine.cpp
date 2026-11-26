@@ -86,6 +86,8 @@ bool SoundFontEngine::loadFile (const juce::File& f, juce::String& error)
         tsfaccess::presetNumbers (fresh, i, bank, number);
         list.push_back ({ juce::String::fromUTF8 (tsf_get_presetname (fresh, i)).trim(), bank, number });
     }
+    // SFZ: un solo preset, col nome intero del file (nel SoundFont i nomi si fermano a 19 caratteri)
+    if (f.hasFileExtension ("sfz") && list.size() == 1) list[0].name = f.getFileNameWithoutExtension();
 
     std::vector<float> env ((size_t) tsfaccess::regionCount (fresh) * tsfaccess::envFloats);
     if (! env.empty()) tsfaccess::readEnvelopes (fresh, env.data());

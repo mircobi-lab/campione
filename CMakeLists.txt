@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 # MBStudio91 Campione: player SoundFont 2 (anche SFZ e waveform Yamaha Motif/Montage) per pianoforte (VST3 / AU / Standalone), grafica MBStudio91.
 # Motore: TinySoundFont (MIT, third_party/TinySoundFont). Progetto distribuito sotto AGPL v3 (vedi LICENSE.md).
-project(MBStudio91Campione VERSION 0.1.0 LANGUAGES C CXX)
+project(MBStudio91Campione VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

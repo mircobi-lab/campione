@@ -165,9 +165,8 @@ bool CampioneProcessor::canSaveSf2() const
     return e.isLoaded() && (f.hasFileExtension ("sfz") || campione::ysfc::isYamahaFile (f));
 }
 
-juce::String CampioneProcessor::saveSf2 (const juce::File& destination)
+juce::String CampioneProcessor::convertAndWrite (const juce::File& src, const juce::File& destination)
 {
-    const auto src = banks[activeBank()].currentFile();
     if (! src.existsAsFile()) return "SOURCE FILE NOT FOUND";
     // si rifà la conversione dal file originale: niente copia in più tenuta in memoria
     juce::MemoryBlock sf2;
@@ -186,6 +185,56 @@ juce::String CampioneProcessor::saveSf2 (const juce::File& destination)
     else return "NOTHING TO CONVERT";
     if (! destination.replaceWithData (sf2.getData(), sf2.getSize())) return "CANNOT WRITE " + destination.getFileName().toUpperCase();
     return {};
+}
+
+juce::String CampioneProcessor::saveSf2 (const juce::File& destination)
+{
+    return convertAndWrite (banks[activeBank()].currentFile(), destination);
+}
+
+void CampioneProcessor::saveSf2Async (const juce::File& destination, std::function<void (juce::String)> done)
+{
+    const auto src = banks[activeBank()].currentFile();
+    saving = true;
+    auto flag = alive;
+    worker.addJob ([this, src, destination, done, flag]
+    {
+        auto err = convertAndWrite (src, destination);
+        juce::MessageManager::callAsync ([this, err, done, flag]
+        {
+            if (! flag->load()) return;
+            saving = false;
+            if (done) done (err);
+        });
+    });
+}
+
+void CampioneProcessor::loadSoundFontAsync (const juce::File& f, int bank)
+{
+    const int b = resolve (bank);
+    ++loadingCount[(size_t) b];
+    { const juce::ScopedLock sl (loadingLock); loadingNames[(size_t) b] = f.getFileName(); }
+    if (onSoundFontChanged) onSoundFontChanged();
+    auto flag = alive;
+    worker.addJob ([this, f, b, flag]
+    {
+        juce::String err;
+        const bool ok = banks[b].loadFile (f, err);
+        juce::MessageManager::callAsync ([this, b, ok, err, flag]
+        {
+            if (! flag->load()) return;
+            errors[(size_t) b] = ok ? juce::String() : err;
+            --loadingCount[(size_t) b];
+            if (onSoundFontChanged) onSoundFontChanged();
+        });
+    });
+}
+
+CampioneProcessor::~CampioneProcessor()
+{
+    // un caricamento in corso non si può interrompere: si aspetta che finisca, poi niente più richiami al pannello
+    alive->store (false);
+    worker.removeAllJobs (false, 120000);
 }
 
 void CampioneProcessor::selectPreset (int index)

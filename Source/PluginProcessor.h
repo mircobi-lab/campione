@@ -9,7 +9,7 @@ class CampioneProcessor : public juce::AudioProcessor
 {
 public:
     CampioneProcessor();
-    ~CampioneProcessor() override = default;
+    ~CampioneProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -41,6 +41,15 @@ public:
     // SAVE SF2: il banco attivo, se viene da un file convertito (SFZ o Yamaha Motif/Montage), salvato come .sf2
     bool canSaveSf2() const;
     juce::String saveSf2 (const juce::File& destination);   // vuoto se è andato bene, altrimenti l'errore
+    // SAVE in un thread a parte: 'done' arriva sul thread dei messaggi con l'errore (vuoto se è andato bene)
+    void saveSf2Async (const juce::File& destination, std::function<void (juce::String)> done);
+
+    // caricamento in un thread a parte: il pannello resta libero e il suono di prima suona finché il nuovo è pronto.
+    // Lo stato del progetto (setStateInformation) carica invece subito, perché il DAW lo aspetta.
+    void loadSoundFontAsync (const juce::File&, int bank = -1);
+    bool isLoading (int bank = -1) const noexcept { return loadingCount[(size_t) resolve (bank)].load() > 0; }
+    juce::String loadingName (int bank = -1) const { const juce::ScopedLock sl (loadingLock); return loadingNames[(size_t) resolve (bank)]; }
+    bool isSaving() const noexcept { return saving.load(); }
     void selectPreset (int index);
     void stepPreset (int delta);
     bool multiMode() const noexcept { return multiParam->load() > .5f; }
@@ -73,6 +82,13 @@ private:
     juce::AudioBuffer<float> dry;
     std::atomic<float> level { 0.f };
     std::array<juce::String, campione::Banks::count> errors;
+    static juce::String convertAndWrite (const juce::File& source, const juce::File& destination);
+    juce::ThreadPool worker { juce::ThreadPoolOptions{}.withNumberOfThreads (1).withThreadName ("Campione loader") };
+    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
+    std::array<std::atomic<int>, campione::Banks::count> loadingCount {};
+    mutable juce::CriticalSection loadingLock;
+    std::array<juce::String, campione::Banks::count> loadingNames;
+    std::atomic<bool> saving { false };
     int resolve (int bank) const noexcept { return bank >= 0 && bank < campione::Banks::count ? bank : activeBank(); }
 
     void updateTone (float t);

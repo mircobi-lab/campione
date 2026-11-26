@@ -121,7 +121,7 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     {
         if (safeThis == nullptr) return;
         // SFZ: avvisi della conversione (regioni saltate, campioni mancanti) per qualche secondo sul display
-        if (const auto notes = safeThis->proc.activeEngine().lastLoadNotes(); ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
+        if (const auto notes = safeThis->proc.activeEngine().lastLoadNotes(); ! safeThis->proc.isLoading() && ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
         {
             safeThis->touched = safeThis->proc.activeEngine().currentFile().hasFileExtension ("sfz") ? "SFZ" : "YAMAHA";
             safeThis->touchedValue = notes[0].toUpperCase();
@@ -209,13 +209,14 @@ void CampionePanel::chooseFile()
     {
         if (safeThis == nullptr) return;
         const auto f = fc.getResult();
-        if (f.existsAsFile()) safeThis->proc.loadSoundFont (f);
+        if (f.existsAsFile()) safeThis->proc.loadSoundFontAsync (f);
         safeThis->repaint();
     });
 }
 
 void CampionePanel::saveSf2()
 {
+    if (proc.isSaving()) return;
     if (! proc.canSaveSf2())
     {
         touched = "SAVE"; touchedValue = "ONLY FOR SFZ OR YAMAHA FILES: LOAD ONE FIRST"; touchedMs = juce::Time::getMillisecondCounter();
@@ -232,11 +233,14 @@ void CampionePanel::saveSf2()
         auto f = fc.getResult();
         if (f == juce::File()) return;
         if (! f.hasFileExtension ("sf2")) f = f.withFileExtension ("sf2");
-        const auto err = safeThis->proc.saveSf2 (f);
-        safeThis->touched = err.isEmpty() ? "SAVED" : "SAVE ERROR";
-        safeThis->touchedValue = err.isEmpty() ? f.getFileName().toUpperCase() : err;
-        safeThis->touchedMs = juce::Time::getMillisecondCounter();
-        safeThis->repaint();
+        safeThis->proc.saveSf2Async (f, [safeThis, f] (juce::String err)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->touched = err.isEmpty() ? "SAVED" : "SAVE ERROR";
+            safeThis->touchedValue = err.isEmpty() ? f.getFileName().toUpperCase() : err;
+            safeThis->touchedMs = juce::Time::getMillisecondCounter();
+            safeThis->repaint();
+        });
     });
 }
 
@@ -255,7 +259,7 @@ void CampionePanel::filesDropped (const juce::StringArray& files, int, int)
 {
     dragOver = false;
     for (auto& f : files)
-        if (isSoundFile (f)) { proc.loadSoundFont (juce::File (f)); break; }
+        if (isSoundFile (f)) { proc.loadSoundFontAsync (juce::File (f)); break; }
     repaint();
 }
 
@@ -372,7 +376,11 @@ void CampionePanel::paint (juce::Graphics& g)
         };
         const auto row2 = juce::Rectangle<float> (in.getX(), in.getY() + 34.f, in.getWidth(), 16.f);
         const auto row3 = juce::Rectangle<float> (in.getX(), in.getY() + 54.f, in.getWidth() - 130.f, 16.f);
-        if (proc.lastError().isNotEmpty())
+        if (proc.isLoading())
+            line (row2, { { "LOADING", proc.loadingName().toUpperCase() + "  ..." } });
+        else if (proc.isSaving())
+            line (row2, { { "SAVING SF2", "..." } });
+        else if (proc.lastError().isNotEmpty())
             line (row2, { { "ERROR", proc.lastError().toUpperCase() } });
         else if (loaded)
         {
@@ -480,7 +488,8 @@ void CampionePanel::paint (juce::Graphics& g)
 void CampionePanel::updateLcd()
 {
     juce::String t;
-    if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
+    if (proc.isLoading()) t = "LOADING " + proc.loadingName();
+    else if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
     else if (proc.activeEngine().isLoaded()) t = proc.activeEngine().currentFile().getFileNameWithoutExtension();
     else t = "NO SOUNDFONT";
     // il font a matrice ha solo i caratteri ASCII: lettere accentate senza accento, il resto diventa '?'

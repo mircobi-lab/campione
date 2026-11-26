@@ -94,10 +94,10 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.${{ github.run_number }}
+          tag_name: v0.2.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          name: MBStudio91 Campione 0.1.${{ github.run_number }}
+          name: MBStudio91 Campione 0.2.${{ github.run_number }}
           body: |
             Compilato automaticamente da GitHub dal commit ${{ github.sha }}.
 
