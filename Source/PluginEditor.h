@@ -41,7 +41,7 @@ private:
     std::vector<std::unique_ptr<Ctl>> ctls;
     std::vector<Section> sections;
     std::array<juce::TextButton, campione::Banks::count> bankBtns;
-    juce::TextButton loadBtn { "LOAD" }, prevBtn { "<" }, nextBtn { ">" }, panicBtn { "PANIC" };
+    juce::TextButton loadBtn { "LOAD" }, saveBtn { "SAVE" }, prevBtn { "<" }, nextBtn { ">" }, panicBtn { "PANIC" };
     mbstudio::ui::LedMeter meter { 14 };
     juce::MidiKeyboardComponent keyboard;
     mbstudio::midi::MidiControls midiButtons;
@@ -63,6 +63,7 @@ private:
     Ctl& add (Kind, const char* pid, const juce::String& label);
     Ctl* find (const char* pid);
     void chooseFile();
+    void saveSf2();
     void showPresetMenu();
     void timerCallback() override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dragOver = true; repaint(); }

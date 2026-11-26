@@ -1,4 +1,5 @@
 #include "SfzToSf2.h"
+#include "Sf2Builder.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <map>
 #include <cmath>
@@ -25,37 +26,58 @@ juce::String stripComments (const juce::String& text)
     return out;
 }
 
-// #include e #define (le variabili $NOME si sostituiscono nel testo)
-juce::String preprocess (const juce::File& file, std::map<juce::String, juce::String>& defines, int depth, juce::StringArray& notes)
+// #include e #define, anche in mezzo a una riga ("<region> #define $KEY 021 ... #include \"x.txt\""), nell'ordine
+// in cui compaiono: le variabili $NOME si sostituiscono con il valore che hanno in quel punto.
+// I percorsi degli #include partono dalla cartella dello SFZ principale (come in sfizz e ARIA);
+// se lì il file non c'è, dalla cartella del file che lo include.
+juce::String substitute (juce::String text, const std::map<juce::String, juce::String>& defines)
+{
+    if (! text.containsChar ('$')) return text;
+    // le variabili più lunghe prima, così $VEL non rovina $VELOCITY
+    std::vector<juce::String> keys;
+    for (auto& d : defines) keys.push_back (d.first);
+    std::sort (keys.begin(), keys.end(), [] (auto& a, auto& b) { return a.length() > b.length(); });
+    for (auto& k : keys) text = text.replace (k, defines.at (k));
+    return text;
+}
+
+juce::String preprocess (const juce::File& file, const juce::File& rootDir, std::map<juce::String, juce::String>& defines, int depth, juce::StringArray& notes)
 {
     if (depth > 8) { notes.add ("#include troppo annidati in " + file.getFileName()); return {}; }
     const auto lines = juce::StringArray::fromLines (stripComments (file.loadFileAsString()));
     juce::String out;
     for (auto line : lines)
     {
-        const auto t = line.trim();
-        if (t.startsWith ("#define"))
+        for (;;)
         {
-            auto rest = t.substring (7).trim();
-            const auto name = rest.upToFirstOccurrenceOf (" ", false, false).trim();
-            const auto value = rest.fromFirstOccurrenceOf (" ", false, false).trim();
-            if (name.startsWith ("$")) defines[name] = value;
-            continue;
+            const int d = line.indexOf ("#define"), i = line.indexOf ("#include");
+            const int at = d < 0 ? i : (i < 0 ? d : juce::jmin (d, i));
+            if (at < 0) { out << substitute (line, defines) << "\n"; break; }
+            out << substitute (line.substring (0, at), defines) << "\n";
+            auto rest = line.substring (at);
+            if (at == d)
+            {
+                // #define $NOME valore (il valore è una sola parola)
+                auto t = rest.substring (7).trimStart();
+                const auto name = t.upToFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf ("\t", false, false);
+                t = t.substring (name.length()).trimStart();
+                auto value = t.upToFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf ("\t", false, false);
+                line = t.substring (value.length());
+                if (name.startsWith ("$")) defines[name] = substitute (value, defines);
+            }
+            else
+            {
+                // #include "percorso"
+                const auto q1 = rest.indexOfChar ('"'), q2 = q1 >= 0 ? rest.indexOfChar (q1 + 1, '"') : -1;
+                if (q1 < 0 || q2 < 0) { line = rest.substring (8); continue; }
+                const auto name = substitute (rest.substring (q1 + 1, q2), defines).replaceCharacter ('\\', '/');
+                line = rest.substring (q2 + 1);
+                auto inc = rootDir.getChildFile (name);
+                if (! inc.existsAsFile()) inc = file.getParentDirectory().getChildFile (name);
+                if (inc.existsAsFile()) out << preprocess (inc, rootDir, defines, depth + 1, notes) << "\n";
+                else notes.addIfNotAlreadyThere ("#include non trovato: " + name);
+            }
         }
-        if (t.startsWith ("#include"))
-        {
-            const auto name = t.fromFirstOccurrenceOf ("\"", false, false).upToLastOccurrenceOf ("\"", false, false).replaceCharacter ('\\', '/');
-            const auto inc = file.getParentDirectory().getChildFile (name);
-            if (inc.existsAsFile()) out << preprocess (inc, defines, depth + 1, notes) << "\n";
-            else notes.add ("#include non trovato: " + name);
-            continue;
-        }
-        // le variabili più lunghe prima, così $VEL non rovina $VELOCITY
-        std::vector<juce::String> keys;
-        for (auto& d : defines) keys.push_back (d.first);
-        std::sort (keys.begin(), keys.end(), [] (auto& a, auto& b) { return a.length() > b.length(); });
-        for (auto& k : keys) line = line.replace (k, defines[k]);
-        out << line << "\n";
     }
     return out;
 }
@@ -141,48 +163,15 @@ struct Sample
     int loopStart = -1, loopEnd = -1;   // dal file (WAV smpl), fine compresa
 };
 
-// --------------------------------------------------------------------------------- scrittura SF2
-struct Writer
-{
-    juce::MemoryOutputStream os;
-    void u8 (int v) { os.writeByte ((char) v); }
-    void u16 (int v) { os.writeShort ((short) v); }
-    void u32 (juce::uint32 v) { os.writeInt ((int) v); }
-    void name20 (const juce::String& s)
-    {
-        char b[20] {};
-        s.substring (0, 19).copyToUTF8 (b, 20);
-        for (int i = 0; i < 20; ++i) if ((unsigned char) b[i] > 127) b[i] = '_';
-        os.write (b, 20);
-    }
-    static juce::MemoryBlock chunk (const char* id, const juce::MemoryBlock& data)
-    {
-        juce::MemoryOutputStream m;
-        m.write (id, 4);
-        m.writeInt ((int) data.getSize());
-        m.write (data.getData(), data.getSize());
-        if (data.getSize() & 1) m.writeByte (0);
-        return m.getMemoryBlock();
-    }
-    static juce::MemoryBlock list (const char* kind, std::initializer_list<juce::MemoryBlock> parts)
-    {
-        juce::MemoryOutputStream body;
-        body.write (kind, 4);
-        for (auto& p : parts) body.write (p.getData(), p.getSize());
-        return chunk ("LIST", body.getMemoryBlock());
-    }
-};
-
-struct Gen { int op; int amount; };   // amount: per i range (lo | hi << 8)
-
-int timecents (double seconds) { return seconds <= 0.001 ? -12000 : juce::jlimit (-12000, 8000, (int) std::lround (1200.0 * std::log2 (seconds))); }
+using sf2::Gen;
+using sf2::timecents;
 }
 
 Result convert (const juce::File& sfzFile)
 {
     Result res;
     std::map<juce::String, juce::String> defines;
-    auto sections = parse (preprocess (sfzFile, defines, 0, res.notes));
+    auto sections = parse (preprocess (sfzFile, sfzFile.getParentDirectory(), defines, 0, res.notes));
 
     // ereditarietà: control -> global -> master -> group -> region
     Opcodes control, global, master, group;
@@ -229,7 +218,7 @@ Result convert (const juce::File& sfzFile)
         if (rd == nullptr) { res.notes.addIfNotAlreadyThere ("campione non trovato o non leggibile: " + path); sampleIndex[key] = -1; return -1; }
         const auto len = (int) juce::jmin<juce::int64> (rd->lengthInSamples, 60 * 192000);
         totalFrames += (double) len * juce::jmin (2, (int) rd->numChannels);
-        if (totalFrames > 400.0e6) { res.notes.addIfNotAlreadyThere ("libreria troppo grande: campioni oltre il limite di memoria saltati"); sampleIndex[key] = -1; return -1; }
+        if (totalFrames > sf2::maxSampleValues) { res.notes.addIfNotAlreadyThere ("libreria troppo grande: campioni oltre il limite di memoria saltati"); sampleIndex[key] = -1; return -1; }
         Sample s;
         s.channels = juce::jmin (2, (int) rd->numChannels);
         s.rate = (int) std::lround (rd->sampleRate);
@@ -264,6 +253,10 @@ Result convert (const juce::File& sfzFile)
 
         if (get ("trigger", "attack") != "attack" && get ("trigger") != "first" && get ("trigger") != "legato") { ++res.skipped; continue; }
         if ((int) num ("seq_position", 1) > 1 || num ("lorand", 0) > 0) { ++res.skipped; continue; }
+        // regioni suonate da un controller (rumore del pedale, coperchio...) o senza tasto (key=-1): non sono note
+        bool ccTriggered = false;
+        for (auto& kv : o) if (kv.first.startsWith ("on_locc") || kv.first.startsWith ("on_hicc") || kv.first.startsWith ("start_locc") || kv.first.startsWith ("start_hicc")) ccTriggered = true;
+        if (ccTriggered || get ("key").trim() == "-1" || get ("hikey").trim() == "-1") { ++res.skipped; continue; }
         if (get ("sw_last").isNotEmpty() && swDefault >= 0 && noteNumber (get ("sw_last")) != swDefault) { ++res.skipped; continue; }
         const auto smp = get ("sample");
         if (smp.isEmpty() || smp.startsWith ("*")) { ++res.skipped; continue; }   // generatori interni (*sine, *noise) non supportati
@@ -304,14 +297,13 @@ Result convert (const juce::File& sfzFile)
             Zone z { {}, si, ch };
             z.gens.push_back ({ 43, lo | (hi << 8) });
             z.gens.push_back ({ 44, lovel | (hivel << 8) });
-            if (start > 0) { z.gens.push_back ({ 0, start % 32768 }); z.gens.push_back ({ 4, start / 32768 }); }
-            if (end < len) { const int d = end - len; z.gens.push_back ({ 1, -((-d) % 32768) }); z.gens.push_back ({ 12, -((-d) / 32768) }); }
+            sf2::addOffset (z.gens, sf2::op::startOffset, sf2::op::startCoarse, start);
+            sf2::addOffset (z.gens, sf2::op::endOffset, sf2::op::endCoarse, end - len);
             if (loops)
             {
-                // offset del loop rispetto al loop del campione (che sarà 0..len, vedi shdr)
-                z.gens.push_back ({ 2, ls % 32768 }); z.gens.push_back ({ 45, ls / 32768 });
-                const int le1 = le + 1 - len;   // SF2: fine del loop esclusa
-                z.gens.push_back ({ 3, -((-le1) % 32768) }); z.gens.push_back ({ 50, -((-le1) / 32768) });
+                // offset del loop rispetto al loop del campione (che è 0..len, vedi Sf2Builder.h)
+                sf2::addOffset (z.gens, sf2::op::loopStartOffset, sf2::op::loopStartCoarse, ls);
+                sf2::addOffset (z.gens, sf2::op::loopEndOffset, sf2::op::loopEndCoarse, le + 1 - len);   // SF2: fine del loop esclusa
             }
             const double chPan = s.channels == 2 ? (ch == 0 ? -100.0 : 100.0) : pan;
             const double finalPan = s.channels == 2 ? juce::jlimit (-100.0, 100.0, chPan + pan) : pan;
@@ -336,76 +328,32 @@ Result convert (const juce::File& sfzFile)
     if (zones.empty()) { res.error = res.notes.isEmpty() ? "NO PLAYABLE REGIONS IN SFZ" : "NO PLAYABLE REGIONS: " + res.notes[0].toUpperCase(); return res; }
     if (zones.size() > 60000) { res.error = "SFZ TOO LARGE"; return res; }
 
-    // ---- sdta: ogni canale di ogni campione, seguito da 46 zeri (regola SF2)
-    Writer smpl;
-    struct SampleHeader { juce::String name; juce::uint32 start, end, ls, le; int rate, link, type; };
-    std::vector<SampleHeader> shdr;
-    std::map<std::pair<int, int>, int> shdrIndex;
-    juce::uint32 pos = 0;
+    // ---- SoundFont: un preset, uno strumento, una zona per regione e canale
+    sf2::Builder out;
+    {
+        size_t bytes = 0;
+        for (auto& s : samples) for (int ch = 0; ch < s.channels; ++ch) bytes += 2 * (s.data[ch].size() + 46);
+        out.reserve (bytes);
+    }
+    std::map<std::pair<int, int>, int> sampleID;
+    res.samples = (int) samples.size();
     for (int si = 0; si < (int) samples.size(); ++si)
     {
-        const auto& s = samples[(size_t) si];
+        auto& s = samples[(size_t) si];
         if (s.data[0].empty()) continue;
-        const int first = (int) shdr.size();
         for (int ch = 0; ch < s.channels; ++ch)
-        {
-            const auto len = (juce::uint32) s.data[ch].size();
-            smpl.os.write (s.data[ch].data(), len * 2);
-            for (int i = 0; i < 46; ++i) smpl.u16 (0);
-            // loop del campione su tutta la lunghezza: i punti veri arrivano dagli offset della zona
-            const int type = s.channels == 1 ? 1 : (ch == 0 ? 4 : 2);
-            shdr.push_back ({ "S" + juce::String (si) + (s.channels == 2 ? (ch == 0 ? "L" : "R") : ""), pos, pos + len, pos, pos + len, s.rate, 0, type });
-            shdrIndex[{ si, ch }] = (int) shdr.size() - 1;
-            pos += len + 46;
-        }
-        if (s.channels == 2) { shdr[(size_t) first].link = first + 1; shdr[(size_t) first + 1].link = first; }
+            sampleID[{ si, ch }] = out.addSample ("S" + juce::String (si) + (s.channels == 2 ? (ch == 0 ? "L" : "R") : ""),
+                                                  s.data[ch].data(), (int) s.data[ch].size(), s.rate);
+        if (s.channels == 2) out.linkStereo (sampleID[{ si, 0 }], sampleID[{ si, 1 }]);
+        for (auto& d : s.data) std::vector<int16_t>().swap (d);   // copiato nel SoundFont: si libera subito
     }
-    res.samples = (int) samples.size();
-    if ((double) pos * 2.0 > 1.9e9) { res.error = "SFZ TOO LARGE"; return res; }
+    if (out.sampleBytes() > 1.9e9) { res.error = "SFZ TOO LARGE"; return res; }
 
-    // ---- pdta
-    Writer phdr, pbag, pmod, pgen, inst, ibag, imod, igen, sh;
     const auto presetName = sfzFile.getFileNameWithoutExtension();
-    phdr.name20 (presetName); phdr.u16 (0); phdr.u16 (0); phdr.u16 (0); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0);
-    phdr.name20 ("EOP"); phdr.u16 (0); phdr.u16 (0); phdr.u16 (1); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0);
-    pbag.u16 (0); pbag.u16 (0); pbag.u16 (1); pbag.u16 (0);
-    pgen.u16 (41); pgen.u16 (0);       // instrument 0
-    pgen.u16 (0); pgen.u16 (0);
-    for (int i = 0; i < 10; ++i) pmod.u8 (0);
-    for (int i = 0; i < 10; ++i) imod.u8 (0);
-    inst.name20 (presetName); inst.u16 (0);
-    inst.name20 ("EOI"); inst.u16 ((int) zones.size());
-    int genCount = 0;
-    for (auto& z : zones)
-    {
-        ibag.u16 (genCount); ibag.u16 (0);
-        for (auto& g : z.gens) { igen.u16 (g.op); igen.u16 (g.amount); ++genCount; }
-        igen.u16 (53); igen.u16 (shdrIndex[{ z.sample, z.channel }]); ++genCount;   // sampleID per ultimo
-    }
-    ibag.u16 (genCount); ibag.u16 (0);
-    igen.u16 (0); igen.u16 (0);
-    for (auto& h : shdr)
-    {
-        sh.name20 (h.name); sh.u32 (h.start); sh.u32 (h.end); sh.u32 (h.ls); sh.u32 (h.le); sh.u32 ((juce::uint32) h.rate);
-        sh.u8 (60); sh.u8 (0); sh.u16 (h.link); sh.u16 (h.type);
-    }
-    sh.name20 ("EOS"); for (int i = 0; i < 5; ++i) sh.u32 (0); sh.u8 (0); sh.u8 (0); sh.u16 (0); sh.u16 (0);
-
-    juce::MemoryOutputStream ifil; ifil.writeShort (2); ifil.writeShort (1);
-    juce::MemoryOutputStream isng; isng.write ("EMU8000\0", 8);
-    juce::MemoryOutputStream inam; { auto n = presetName.substring (0, 60).toStdString(); n.push_back (0); if (n.size() & 1) n.push_back (0); inam.write (n.data(), n.size()); }
-
-    const auto info = Writer::list ("INFO", { Writer::chunk ("ifil", ifil.getMemoryBlock()), Writer::chunk ("isng", isng.getMemoryBlock()), Writer::chunk ("INAM", inam.getMemoryBlock()) });
-    const auto sdta = Writer::list ("sdta", { Writer::chunk ("smpl", smpl.os.getMemoryBlock()) });
-    const auto pdta = Writer::list ("pdta", { Writer::chunk ("phdr", phdr.os.getMemoryBlock()), Writer::chunk ("pbag", pbag.os.getMemoryBlock()),
-                                              Writer::chunk ("pmod", pmod.os.getMemoryBlock()), Writer::chunk ("pgen", pgen.os.getMemoryBlock()),
-                                              Writer::chunk ("inst", inst.os.getMemoryBlock()), Writer::chunk ("ibag", ibag.os.getMemoryBlock()),
-                                              Writer::chunk ("imod", imod.os.getMemoryBlock()), Writer::chunk ("igen", igen.os.getMemoryBlock()),
-                                              Writer::chunk ("shdr", sh.os.getMemoryBlock()) });
-    juce::MemoryOutputStream body;
-    body.write ("sfbk", 4);
-    for (auto* b : { &info, &sdta, &pdta }) body.write (b->getData(), b->getSize());
-    res.sf2 = Writer::chunk ("RIFF", body.getMemoryBlock());
+    out.addInstrument (presetName);
+    for (auto& z : zones) out.addZone (z.gens, sampleID[{ z.sample, z.channel }]);
+    out.addPreset (presetName, 0, 0, 0);
+    res.sf2 = out.build (presetName);
     if (res.skipped > 0) res.notes.add (juce::String (res.skipped) + " regioni saltate (release, round robin, keyswitch o campioni mancanti)");
     return res;
 }

@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+#include "SfzToSf2.h"
+#include "YamahaToSf2.h"
 #include "PluginEditor.h"
 
 using namespace campione;
@@ -12,7 +14,7 @@ CampioneProcessor::CampioneProcessor()
     tone = raw (id::tone); tune = raw (id::tune); transpose = raw (id::transpose); a4ref = raw (id::a4ref); velCurve = raw (id::velCurve);
     sf2Env = raw (id::sf2Env); attack = raw (id::attack); decay = raw (id::decay); sustain = raw (id::sustain); release = raw (id::release);
     pedal = raw (id::pedal); soft = raw (id::soft); softAmt = raw (id::softAmt);
-    roomOn = raw (id::roomOn); roomSize = raw (id::roomSize); roomDamp = raw (id::roomDamp); roomMix = raw (id::roomMix); volume = raw (id::volume); bankParam = raw (id::bank);
+    roomOn = raw (id::roomOn); roomSize = raw (id::roomSize); roomDamp = raw (id::roomDamp); roomMix = raw (id::roomMix); volume = raw (id::volume); bankParam = raw (id::bank); multiParam = raw (id::multi);
 
     // banchi per i profili dei controller: A suono, B inviluppo, C pedali e stanza, D uscita
     midiMap.setBanks ({ juce::StringArray { id::tone, id::tune, id::transpose, id::velCurve, id::softAmt, id::roomMix, id::roomSize, id::volume },
@@ -80,6 +82,7 @@ void CampioneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     s.softAmount = softAmt->load();
     s.sf2Envelope = sf2Env->load() > .5f;
     s.attack = attack->load(); s.decay = decay->load(); s.sustain = sustain->load(); s.release = release->load();
+    s.multi = multiParam->load() > .5f;
     banks.render (buffer, midi, activeBank(), s);
 
     const int chans = juce::jmin (2, buffer.getNumChannels());
@@ -153,6 +156,85 @@ bool CampioneProcessor::loadSoundFont (const juce::File& f, int bank)
     errors[(size_t) b] = ok ? juce::String() : err;
     if (onSoundFontChanged) onSoundFontChanged();
     return ok;
+}
+
+bool CampioneProcessor::canSaveSf2() const
+{
+    const auto& e = banks[activeBank()];
+    const auto f = e.currentFile();
+    return e.isLoaded() && (f.hasFileExtension ("sfz") || campione::ysfc::isYamahaFile (f));
+}
+
+juce::String CampioneProcessor::convertAndWrite (const juce::File& src, const juce::File& destination)
+{
+    if (! src.existsAsFile()) return "SOURCE FILE NOT FOUND";
+    // si rifà la conversione dal file originale: niente copia in più tenuta in memoria
+    juce::MemoryBlock sf2;
+    if (src.hasFileExtension ("sfz"))
+    {
+        auto r = campione::sfz::convert (src);
+        if (r.error.isNotEmpty()) return r.error;
+        sf2 = std::move (r.sf2);
+    }
+    else if (campione::ysfc::isYamahaFile (src))
+    {
+        auto r = campione::ysfc::convert (src);
+        if (r.error.isNotEmpty()) return r.error;
+        sf2 = std::move (r.sf2);
+    }
+    else return "NOTHING TO CONVERT";
+    if (! destination.replaceWithData (sf2.getData(), sf2.getSize())) return "CANNOT WRITE " + destination.getFileName().toUpperCase();
+    return {};
+}
+
+juce::String CampioneProcessor::saveSf2 (const juce::File& destination)
+{
+    return convertAndWrite (banks[activeBank()].currentFile(), destination);
+}
+
+void CampioneProcessor::saveSf2Async (const juce::File& destination, std::function<void (juce::String)> done)
+{
+    const auto src = banks[activeBank()].currentFile();
+    saving = true;
+    auto flag = alive;
+    worker.addJob ([this, src, destination, done, flag]
+    {
+        auto err = convertAndWrite (src, destination);
+        juce::MessageManager::callAsync ([this, err, done, flag]
+        {
+            if (! flag->load()) return;
+            saving = false;
+            if (done) done (err);
+        });
+    });
+}
+
+void CampioneProcessor::loadSoundFontAsync (const juce::File& f, int bank)
+{
+    const int b = resolve (bank);
+    ++loadingCount[(size_t) b];
+    { const juce::ScopedLock sl (loadingLock); loadingNames[(size_t) b] = f.getFileName(); }
+    if (onSoundFontChanged) onSoundFontChanged();
+    auto flag = alive;
+    worker.addJob ([this, f, b, flag]
+    {
+        juce::String err;
+        const bool ok = banks[b].loadFile (f, err);
+        juce::MessageManager::callAsync ([this, b, ok, err, flag]
+        {
+            if (! flag->load()) return;
+            errors[(size_t) b] = ok ? juce::String() : err;
+            --loadingCount[(size_t) b];
+            if (onSoundFontChanged) onSoundFontChanged();
+        });
+    });
+}
+
+CampioneProcessor::~CampioneProcessor()
+{
+    // un caricamento in corso non si può interrompere: si aspetta che finisca, poi niente più richiami al pannello
+    alive->store (false);
+    worker.removeAllJobs (false, 120000);
 }
 
 void CampioneProcessor::selectPreset (int index)

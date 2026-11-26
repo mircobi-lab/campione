@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
+#include <array>
 #include <atomic>
 #include <vector>
 
@@ -18,7 +19,16 @@ struct EngineSettings
     float softAmount = .4f;
     bool sf2Envelope = true;
     float attack = .002f, decay = 6.f, sustain = 0.f, release = .6f;
+    bool multi = false;         // GM/XG: 16 canali MIDI, ognuno col suo programma, canale 10 batteria
 };
+
+/*  Scelta del preset da banco MIDI (CC 0 MSB, CC 32 LSB) e programma, con le convenzioni dei SoundFont GM, GS e XG:
+    - batteria (banco SF2 128): MSB 127 (XG), 126 (XG SFX kit), 120 (GM2), oppure canale 10 con MSB 0
+    - XG: MSB 0 e LSB = variante -> banco SF2 uguale alla LSB
+    - GS: MSB = variante -> banco SF2 uguale alla MSB; GM2: MSB 121 e LSB = variante
+    - se la variante non c'è nel file: lo stesso programma nel banco 0, come fanno i moduli GM
+    Restituisce l'indice del preset o -1; 'drum' dice se è una batteria.                                  */
+int findPreset (const tsf*, int msb, int lsb, int program, bool drumChannel, bool& drum);
 
 /*  Motore SoundFont 2 basato su TinySoundFont (MIT, third_party/TinySoundFont).
     - il file si carica sul thread dei messaggi (loadFile) e passa al thread audio sotto un lock;
@@ -32,6 +42,7 @@ class SoundFontEngine
 public:
     struct PresetInfo { juce::String name; int bank = 0, number = 0; };
     static constexpr int maxVoices = 256;
+    static constexpr int midiChannels = 16, drumChannel = 9;   // canale 10 (da 0) per la batteria GM
 
     SoundFontEngine();
     ~SoundFontEngine();
@@ -78,7 +89,10 @@ private:
     bool ccSoft = false, appliedPedal = false;
     std::atomic<float> pedalAmount { 0.f };
     juce::StringArray loadNotes;
-    int bankMsb = 0, bankLsb = 0;
+    std::array<int, midiChannels> bankMsb {}, bankLsb {};
+    std::array<bool, midiChannels> drumCh {};
+    int appliedMulti = -1;          // -1: canali da sistemare (file nuovo o prepare)
+    void resetChannels (bool multi) noexcept;
     float appliedTuning = 1.0e9f;
     struct EnvKey { bool sf2 = true; float a = -1, d = -1, s = -1, r = -1; bool operator!= (const EnvKey& o) const { return sf2 != o.sf2 || ! juce::exactlyEqual (a, o.a) || ! juce::exactlyEqual (d, o.d) || ! juce::exactlyEqual (s, o.s) || ! juce::exactlyEqual (r, o.r); } };
     EnvKey appliedEnv;

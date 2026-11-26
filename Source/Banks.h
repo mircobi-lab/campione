@@ -28,7 +28,7 @@ public:
 private:
     std::array<SoundFontEngine, count> engines;
     std::array<juce::MidiBuffer, count> midiFor;
-    std::array<int, 128> noteBank {};
+    std::array<int, 16 * 128> noteBank {};   // per canale MIDI e tasto: il banco in cui la nota è partita
     juce::AudioBuffer<float> mix;
 };
 }

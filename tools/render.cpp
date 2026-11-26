@@ -1,6 +1,7 @@
 // Prova offline del motore di Campione: carica un SF2, controlla intonazione, pedale, inviluppo, cambi di programma e PANIC,
 // poi scrive un accordo in WAV. Uso: campione_render FILE.sf2 [uscita.wav]   (codice di uscita 0 = tutte le prove passate)
 #include "Banks.h"
+#include "YamahaToSf2.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
 using namespace campione;
@@ -46,6 +47,16 @@ float rms (const juce::AudioBuffer<float>& b, double from, double to)
 }
 
 // frequenza dai passaggi per lo zero (sale), sulla finestra indicata
+void writeWav (const juce::AudioBuffer<float>& b, const juce::File& out)
+{
+    out.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> os (out.createOutputStream().release());
+    if (os != nullptr)
+        if (auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (sr).withNumChannels (2).withBitsPerSample (24)))
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+}
+
 double pitch (const juce::AudioBuffer<float>& b, double from, double to)
 {
     const auto* d = b.getReadPointer (0);
@@ -67,7 +78,24 @@ int main (int argc, char* argv[])
     juce::String err;
     const bool ok = e.loadFile (juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]), err);
     check (ok, "caricamento " + juce::String (argv[1]) + (ok ? "" : " (" + err + ")"));
+    for (auto& n : e.lastLoadNotes()) std::cout << "    nota: " << n << "\n";
     if (! ok) return 1;
+    // CAMPIONE_NOTE=69 CAMPIONE_NOTE_WAV=nota.wav: registra solo una nota (per analizzare un suono vero) ed esce
+    if (auto* nn = std::getenv ("CAMPIONE_NOTE"); nn != nullptr)
+    {
+        const int note = juce::String (nn).getIntValue();
+        const float vel = std::getenv ("CAMPIONE_VEL") != nullptr ? juce::String (std::getenv ("CAMPIONE_VEL")).getFloatValue() / 127.f : .8f;
+        const auto buf = play (e, { { 0.0, juce::MidiMessage::noteOn (1, note, vel) }, { 1.5, off (note) } }, 2.5);
+        if (std::getenv ("CAMPIONE_VEL") != nullptr)
+            for (int v : { 15, 45, 75, 100, 120 })
+            {
+                const auto b2 = play (e, { { 0.0, juce::MidiMessage::noteOn (1, note, (juce::uint8) v) }, { .8, off (note) } }, 1.0);
+                std::cout << "    velocity " << v << ": RMS " << b2.getRMSLevel (0, 0, (int) (.5 * sr)) << "\n";
+            }
+        if (auto* w = std::getenv ("CAMPIONE_NOTE_WAV")) writeWav (buf, juce::File::getCurrentWorkingDirectory().getChildFile (w));
+        std::cout << "    nota " << note << ": " << pitch (buf, .1, .6) << " Hz (misura per zeri)\n";
+        return 0;
+    }
     e.prepare (sr, block);
     for (auto& p : e.presets()) std::cout << "    " << juce::String (p.bank).paddedLeft ('0', 3) << ":" << juce::String (p.number).paddedLeft ('0', 3) << "  " << p.name << std::endl;
     check (e.currentPreset() >= 0, "preset iniziale (banco 0, programma 0 se esiste)");
@@ -229,7 +257,55 @@ int main (int argc, char* argv[])
         const double f220 = pitch (lo, .1, .5);
         check (std::abs (f220 - 220.0) < 1.5, file.getFileName() + ": La3 a " + juce::String (f220, 1) + " Hz (atteso 220)");
         check (rms (lo, 1.6, 1.9) < rms (lo, .1, .5) * .05f, file.getFileName() + ": dopo il rilascio il suono si spegne");
-        if (file.hasFileExtension ("sfz"))
+        if (file.getFileName().startsWith ("prova_gm"))
+        {
+            // GM/XG: ogni canale il suo programma, banco da CC 0 / CC 32, canale 10 batteria
+            using MM = juce::MidiMessage;
+            EngineSettings gm; gm.multi = true;
+            auto hz = [&] (std::vector<Event> ev, int ch, const EngineSettings& st)
+            {
+                // le sinusoidi di prova sono in loop: prima di ogni misura si spegne tutto
+                std::vector<Event> all;
+                for (int c = 1; c <= 16; ++c) all.push_back ({ 0.0, MM::allSoundOff (c) });
+                ev.insert (ev.begin(), all.begin(), all.end());
+                ev.push_back ({ .05, MM::noteOn (ch, 69, .8f) });
+                return pitch (play (x, ev, .5, st), .15, .45);
+            };
+            auto near = [] (double f, double want) { return std::abs (f - want) < 2.5; };
+            double f = hz ({}, 1, gm);
+            check (near (f, 440), "GM/XG: canale 1 programma 0 a " + juce::String (f, 1) + " Hz (atteso 440)");
+            f = hz ({}, 10, gm);
+            check (near (f, 275), "GM/XG: canale 10 suona il kit di batteria, " + juce::String (f, 1) + " Hz (atteso 275)");
+            f = hz ({ { 0.0, MM::controllerEvent (2, 0, 0) }, { 0.0, MM::controllerEvent (2, 32, 1) }, { 0.0, MM::programChange (2, 0) } }, 2, gm);
+            check (near (f, 550), "GM/XG: variante XG (CC 32 = 1) a " + juce::String (f, 1) + " Hz (atteso 550)");
+            f = hz ({ { 0.0, MM::controllerEvent (3, 0, 8) }, { 0.0, MM::controllerEvent (3, 32, 0) }, { 0.0, MM::programChange (3, 0) } }, 3, gm);
+            check (near (f, 400), "GM/XG: variante GS (CC 0 = 8) a " + juce::String (f, 1) + " Hz (atteso 400)");
+            f = hz ({ { 0.0, MM::controllerEvent (4, 0, 0) }, { 0.0, MM::controllerEvent (4, 32, 5) }, { 0.0, MM::programChange (4, 0) } }, 4, gm);
+            check (near (f, 440), "GM/XG: variante assente, ripiego sul banco 0, " + juce::String (f, 1) + " Hz (atteso 440)");
+            f = hz ({ { 0.0, MM::controllerEvent (5, 0, 127) }, { 0.0, MM::programChange (5, 25) } }, 5, gm);
+            check (near (f, 880), "GM/XG: kit XG su un altro canale (CC 0 = 127, programma 25) a " + juce::String (f, 1) + " Hz (atteso 880)");
+            f = hz ({ { 0.0, MM::programChange (6, 1) } }, 6, gm);
+            check (near (f, 500), "GM/XG: Program Change 1 sul canale 6 a " + juce::String (f, 1) + " Hz (atteso 500)");
+            f = hz ({}, 1, gm);
+            check (near (f, 440), "GM/XG: il canale 1 non cambia per i Program Change degli altri canali");
+            EngineSettings gmT = gm; gmT.transpose = 12;
+            f = hz ({}, 10, gmT);
+            check (near (f, 275), "GM/XG: la batteria non si traspone (" + juce::String (f, 1) + " Hz)");
+            f = hz ({}, 7, gmT);
+            check (near (f, 880), "GM/XG: gli altri canali si traspongono (" + juce::String (f, 1) + " Hz, atteso 880)");
+            // due canali insieme: pianoforte e batteria suonano tutti e due
+            const auto both = play (x, { { .05, MM::noteOn (1, 69, .8f) }, { .05, MM::noteOn (10, 81, .8f) } }, .4, gm);
+            check (x.activeVoices() >= 2, "GM/XG: canale 1 e canale 10 suonano insieme (" + juce::String (x.activeVoices()) + " voci)");
+            juce::ignoreUnused (both);
+            // modo PIANO: tutto il MIDI va al preset scelto, anche il canale 10; la variante XG si sceglie col CC 32
+            EngineSettings piano;
+            play (x, { { 0.0, MM::allSoundOff (1) } }, .05, piano);
+            f = hz ({ { 0.0, MM::programChange (1, 0) } }, 10, piano);
+            check (near (f, 440), "PIANO: il canale 10 suona il preset scelto, non la batteria (" + juce::String (f, 1) + " Hz)");
+            f = hz ({ { 0.0, MM::controllerEvent (1, 0, 0) }, { 0.0, MM::controllerEvent (1, 32, 1) }, { 0.0, MM::programChange (1, 0) } }, 1, piano);
+            check (near (f, 550), "PIANO: Program Change con variante XG (CC 32 = 1) a " + juce::String (f, 1) + " Hz (atteso 550)");
+        }
+        else if (file.hasFileExtension ("sfz"))
         {
             // tasto 69: regione dell'organo stereo in loop; deve suonare ancora dopo la fine del campione (0,5 s)
             const auto hi = play (x, { { 0.0, on (69) }, { 1.5, off (69) } }, 1.6);
@@ -238,13 +314,41 @@ int main (int argc, char* argv[])
             check (rms (hi, 1.0, 1.4) > rms (hi, .1, .4) * .5f, "sfz: il loop continua oltre la fine del campione");
             check (hi.getRMSLevel (0, (int) (.1 * sr), (int) (.3 * sr)) > hi.getRMSLevel (1, (int) (.1 * sr), (int) (.3 * sr)) * 1.1f,
                    "sfz: campione stereo, canale sinistro più forte come nel file");
-            check (x.lastLoadNotes().joinIntoString (" ").contains ("1 regioni saltate"), "sfz: la regione trigger=release viene saltata");
+            check (x.lastLoadNotes().joinIntoString (" ").contains ("1 regioni saltate"), file.getFileName() + ": la regione di rilascio o del pedale viene saltata");
+            check (! x.lastLoadNotes().joinIntoString (" ").contains ("non trovato"), file.getFileName() + ": tutti gli #include e i campioni trovati");
         }
         else
         {
             x.selectPreset (1);
             const auto org = play (x, { { 0.0, on (69) }, { 1.5, off (69) } }, 1.6);
             check (rms (org, 1.0, 1.4) > rms (org, .1, .4) * .5f, file.getFileName() + ": l'organo in loop continua oltre la fine del campione");
+            if (ysfc::isYamahaFile (file))
+            {
+                const auto name = file.getFileName();
+                const double f440y = pitch (org, 1.0, 1.4);
+                check (std::abs (f440y - 440.0) < 2.0, name + ": nel loop La4 a " + juce::String (f440y, 1) + " Hz (punti del loop giusti)");
+                check (org.getRMSLevel (0, (int) (.1 * sr), (int) (.3 * sr)) > org.getRMSLevel (1, (int) (.1 * sr), (int) (.3 * sr)) * 1.3f,
+                       name + ": waveform stereo, canale sinistro più forte come nel file");
+                const auto list = x.presets();
+                check (list.size() == 2 && list[0].name == "Test Piano" && list[1].name == "Test Organ",
+                       name + ": un preset per waveform, con il nome della waveform");
+                const auto notes = x.lastLoadNotes().joinIntoString (" | ");
+                if (file.hasFileExtension ("x7l"))
+                {
+                    check (notes.contains ("1 keybank cifrati saltati"), name + ": la waveform cifrata viene saltata");
+                    check (notes.contains ("2 performance non convertite"), name + ": le performance sono segnalate");
+                }
+                // SAVE SF2: il file scritto si ricarica e ha gli stessi preset
+                const auto conv = ysfc::convert (file);
+                const auto saved = file.withFileExtension ("converted.sf2");
+                check (conv.error.isEmpty() && saved.replaceWithData (conv.sf2.getData(), conv.sf2.getSize()), name + ": scrittura del .sf2");
+                SoundFontEngine y;
+                y.prepare (sr, block);
+                juce::String yerr;
+                check (y.loadFile (saved, yerr) && y.presets().size() == 2, name + ": il .sf2 salvato si ricarica con 2 preset" + (yerr.isEmpty() ? "" : " (" + yerr + ")"));
+                const auto again = play (y, { { 0.0, on (57) }, { .6, off (57) } }, 1.0);
+                check (std::abs (pitch (again, .1, .5) - 220.0) < 1.5, name + ": il .sf2 salvato suona come il file Yamaha");
+            }
         }
     }
 

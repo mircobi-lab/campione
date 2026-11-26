@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "LcdFont.h"
+#include "YamahaToSf2.h"
 
 namespace ui = mbstudio::ui;
 namespace C = mbstudio::ui::colours;
@@ -54,12 +55,22 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     add (Kind::toggle, id::roomOn, "ROOM").cell = { 760, row2Y, 84, row2H };
     // OUTPUT
     add (Kind::fader, id::volume, "VOLUME").cell = { 998, cellY, 50, 136 };
+    // GM/XG: accanto ai banchi, perché vale per il SoundFont multibanco caricato
+    add (Kind::toggle, id::multi, "GM/XG").cell = { 270, 76, 84, 24 };
 
     find (id::sf2Env)->button.getProperties().set ("ledColour", "ff3d8bff");
     find (id::roomOn)->button.getProperties().set ("ledColour", "ffffb020");
+    find (id::multi)->button.getProperties().set ("ledColour", "ff3d8bff");
+    find (id::multi)->button.setTooltip ("GM/XG: SoundFont multibanco come un modulo General MIDI. Ogni canale MIDI suona il suo programma "
+                                         "(Program Change con banco da CC 0 e CC 32, varianti XG e GS), il canale 10 suona la batteria (banco 128). "
+                                         "Spento: tutto il MIDI suona il preset scelto sul display.");
 
-    loadBtn.setTooltip ("Carica un suono: SoundFont 2 (.sf2), SoundFont compresso (.sf3) o SFZ (.sfz con la sua cartella di campioni). Puoi anche trascinarlo sul pannello.");
+    loadBtn.setTooltip ("Carica un suono: SoundFont 2 (.sf2), SoundFont compresso (.sf3), SFZ (.sfz con la sua cartella di campioni) "
+                        "o file Yamaha Motif, MOXF, Montage, MODX (.X0A .X3A .X6A .X7U .X7L .X8U .X8L .Y2L e simili: solo le waveform utente). "
+                        "Puoi anche trascinarlo sul pannello.");
     loadBtn.onClick = [this] { chooseFile(); };
+    saveBtn.setTooltip ("Salva come SoundFont 2 (.sf2) il suono del banco attivo, se viene da un file SFZ o Yamaha Motif / Montage");
+    saveBtn.onClick = [this] { saveSf2(); };
     prevBtn.onClick = [this] { proc.stepPreset (-1); };
     nextBtn.onClick = [this] { proc.stepPreset (1); };
     panicBtn.setTooltip ("MIDI PANIC: spegne subito tutte le note e azzera pedali e pitch bend");
@@ -72,7 +83,7 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
         panicFlash = 15;
         touched = "PANIC"; touchedValue = "ALL NOTES OFF"; touchedMs = juce::Time::getMillisecondCounter();
     };
-    for (auto* b : { &loadBtn, &prevBtn, &nextBtn, &panicBtn }) addAndMakeVisible (*b);
+    for (auto* b : { &loadBtn, &saveBtn, &prevBtn, &nextBtn, &panicBtn }) addAndMakeVisible (*b);
 
     // banchi A, B, C, D: ognuno col suo SoundFont; il LED blu indica quello che suona
     for (int i = 0; i < Banks::count; ++i)
@@ -110,9 +121,9 @@ CampionePanel::CampionePanel (CampioneProcessor& p)
     {
         if (safeThis == nullptr) return;
         // SFZ: avvisi della conversione (regioni saltate, campioni mancanti) per qualche secondo sul display
-        if (const auto notes = safeThis->proc.activeEngine().lastLoadNotes(); ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
+        if (const auto notes = safeThis->proc.activeEngine().lastLoadNotes(); ! safeThis->proc.isLoading() && ! notes.isEmpty() && safeThis->proc.lastError().isEmpty())
         {
-            safeThis->touched = "SFZ";
+            safeThis->touched = safeThis->proc.activeEngine().currentFile().hasFileExtension ("sfz") ? "SFZ" : "YAMAHA";
             safeThis->touchedValue = notes[0].toUpperCase();
             safeThis->touchedMs = juce::Time::getMillisecondCounter();
         }
@@ -192,20 +203,50 @@ void CampionePanel::chooseFile()
     auto start = proc.activeEngine().currentFile();
     chooser = std::make_unique<juce::FileChooser> ("Load SoundFont", start.existsAsFile() ? start.getParentDirectory()
                                                                                         : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
-                                                   "*.sf2;*.sf3;*.sfz;*.SF2;*.SF3;*.SFZ");
+                                                   "*.sf2;*.sf3;*.sfz;*.SF2;*.SF3;*.SFZ;" + ysfc::wildcard());
     juce::Component::SafePointer<CampionePanel> safeThis (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safeThis] (const juce::FileChooser& fc)
     {
         if (safeThis == nullptr) return;
         const auto f = fc.getResult();
-        if (f.existsAsFile()) safeThis->proc.loadSoundFont (f);
+        if (f.existsAsFile()) safeThis->proc.loadSoundFontAsync (f);
         safeThis->repaint();
+    });
+}
+
+void CampionePanel::saveSf2()
+{
+    if (proc.isSaving()) return;
+    if (! proc.canSaveSf2())
+    {
+        touched = "SAVE"; touchedValue = "ONLY FOR SFZ OR YAMAHA FILES: LOAD ONE FIRST"; touchedMs = juce::Time::getMillisecondCounter();
+        repaint();
+        return;
+    }
+    const auto src = proc.activeEngine().currentFile();
+    chooser = std::make_unique<juce::FileChooser> ("Save as SoundFont 2", src.getSiblingFile (src.getFileNameWithoutExtension() + ".sf2"), "*.sf2");
+    juce::Component::SafePointer<CampionePanel> safeThis (this);
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [safeThis] (const juce::FileChooser& fc)
+    {
+        if (safeThis == nullptr) return;
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        if (! f.hasFileExtension ("sf2")) f = f.withFileExtension ("sf2");
+        safeThis->proc.saveSf2Async (f, [safeThis, f] (juce::String err)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->touched = err.isEmpty() ? "SAVED" : "SAVE ERROR";
+            safeThis->touchedValue = err.isEmpty() ? f.getFileName().toUpperCase() : err;
+            safeThis->touchedMs = juce::Time::getMillisecondCounter();
+            safeThis->repaint();
+        });
     });
 }
 
 bool CampionePanel::isSoundFile (const juce::String& f)
 {
-    return f.endsWithIgnoreCase (".sf2") || f.endsWithIgnoreCase (".sf3") || f.endsWithIgnoreCase (".sfz");
+    return f.endsWithIgnoreCase (".sf2") || f.endsWithIgnoreCase (".sf3") || f.endsWithIgnoreCase (".sfz") || ysfc::isYamahaFile (juce::File (f));
 }
 
 bool CampionePanel::isInterestedInFileDrag (const juce::StringArray& files)
@@ -218,7 +259,7 @@ void CampionePanel::filesDropped (const juce::StringArray& files, int, int)
 {
     dragOver = false;
     for (auto& f : files)
-        if (isSoundFile (f)) { proc.loadSoundFont (juce::File (f)); break; }
+        if (isSoundFile (f)) { proc.loadSoundFontAsync (juce::File (f)); break; }
     repaint();
 }
 
@@ -270,7 +311,8 @@ void CampionePanel::resized()
     displayArea = { 420, 14, 560, 90 };
     lcdArea = { margin, lcdY, lcdW, lcdH };
     for (int i = 0; i < Banks::count; ++i) bankBtns[(size_t) i].setBounds (62 + i * 50, 76, 44, 24);
-    loadBtn.setBounds (994, 16, 108, 30);
+    loadBtn.setBounds (994, 16, 54, 30);
+    saveBtn.setBounds (1052, 16, 52, 30);
     prevBtn.setBounds (1108, 16, 38, 30);
     nextBtn.setBounds (1152, 16, 38, 30);
     midiButtons.setBounds (994, 58, 166, 30);
@@ -299,7 +341,7 @@ void CampionePanel::paint (juce::Graphics& g)
 
     // marchio e sottotitolo
     ui::paintBrand (g, { 18.f, 16.f, 360.f, 34.f }, "CAMPIONE");
-    ui::paintPrinted (g, { 18.f, 56.f, 390.f, 16.f }, "SOUNDFONT PIANO PLAYER  -  SF2 SF3 SFZ", 14.f, juce::Justification::centredLeft, C::printDim);
+    ui::paintPrinted (g, { 18.f, 56.f, 390.f, 16.f }, "SOUNDFONT PIANO PLAYER  -  SF2 SF3 SFZ YAMAHA", 14.f, juce::Justification::centredLeft, C::printDim);
     ui::paintPrinted (g, { 18.f, 76.f, 44.f, 24.f }, "BANK", 12.f, juce::Justification::centredLeft);
 
     // display
@@ -334,14 +376,25 @@ void CampionePanel::paint (juce::Graphics& g)
         };
         const auto row2 = juce::Rectangle<float> (in.getX(), in.getY() + 34.f, in.getWidth(), 16.f);
         const auto row3 = juce::Rectangle<float> (in.getX(), in.getY() + 54.f, in.getWidth() - 130.f, 16.f);
-        if (proc.lastError().isNotEmpty())
+        if (proc.isLoading())
+            line (row2, { { "LOADING", proc.loadingName().toUpperCase() + "  ..." } });
+        else if (proc.isSaving())
+            line (row2, { { "SAVING SF2", "..." } });
+        else if (proc.lastError().isNotEmpty())
             line (row2, { { "ERROR", proc.lastError().toUpperCase() } });
         else if (loaded)
-            line (row2, { { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() },
-                          { "BANK", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) },
-                          { "PROG", juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) } });
+        {
+            if (proc.multiMode())
+                line (row2, { { "GM/XG", "16 CH  -  CH 10 DRUMS" },
+                              { "CH 1", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) + ":" + juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) },
+                              { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() } });
+            else
+                line (row2, { { "FILE", proc.activeEngine().currentFile().getFileName().toUpperCase() },
+                              { "BANK", juce::String (list[(size_t) cur].bank).paddedLeft ('0', 3) },
+                              { "PROG", juce::String (list[(size_t) cur].number).paddedLeft ('0', 3) } });
+        }
         else
-            line (row2, { { "", "CLICK LOAD OR DROP AN SF2, SF3 OR SFZ FILE HERE" } });
+            line (row2, { { "", "CLICK LOAD OR DROP AN SF2, SF3, SFZ OR MOTIF / MONTAGE FILE" } });
 
         const bool showTouched = touched.isNotEmpty() && juce::Time::getMillisecondCounter() - touchedMs < 2500;
         if (showTouched)
@@ -435,7 +488,8 @@ void CampionePanel::paint (juce::Graphics& g)
 void CampionePanel::updateLcd()
 {
     juce::String t;
-    if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
+    if (proc.isLoading()) t = "LOADING " + proc.loadingName();
+    else if (proc.lastError().isNotEmpty()) t = "ERROR - " + proc.lastError();
     else if (proc.activeEngine().isLoaded()) t = proc.activeEngine().currentFile().getFileNameWithoutExtension();
     else t = "NO SOUNDFONT";
     // il font a matrice ha solo i caratteri ASCII: lettere accentate senza accento, il resto diventa '?'
@@ -494,6 +548,10 @@ void CampionePanel::paintLcd (juce::Graphics& g)
 
 void CampionePanel::updateBankButtons()
 {
+    // SAVE acceso solo quando il banco attivo viene da un file convertito (SFZ o Yamaha)
+    const auto saveTxt = proc.canSaveSf2() ? C::print : C::printDim.withAlpha (.55f);
+    saveBtn.setColour (juce::TextButton::textColourOffId, saveTxt);
+    saveBtn.setColour (juce::TextButton::textColourOnId, saveTxt);
     const int active = proc.activeBank();
     for (int i = 0; i < Banks::count; ++i)
     {
@@ -504,7 +562,7 @@ void CampionePanel::updateBankButtons()
         const auto txt = e.isLoaded() ? C::print : C::printDim.withAlpha (.55f);
         b.setColour (juce::TextButton::textColourOffId, txt);
         b.setColour (juce::TextButton::textColourOnId, txt);
-        b.setTooltip ("BANK " + Banks::name (i) + ": " + (e.isLoaded() ? e.currentFile().getFileName() : juce::String ("vuoto, carica un .sf2")));
+        b.setTooltip ("BANK " + Banks::name (i) + ": " + (e.isLoaded() ? e.currentFile().getFileName() : juce::String ("vuoto, carica un .sf2, .sfz o un file Yamaha")));
     }
 }
 

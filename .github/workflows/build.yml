@@ -24,11 +24,13 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCAMPIONE_BUILD_TOOLS=ON
       - name: Compila lo strumento di prova
         run: cmake --build build --target campione_render -j4
-      - name: SoundFont di prova e controlli (intonazione, pedali e mezzo pedale, inviluppo, PANIC, SF3, SFZ)
+      - name: SoundFont di prova e controlli (intonazione, pedali e mezzo pedale, inviluppo, PANIC, SF3, SFZ, Yamaha, GM/XG)
         run: |
           python3 tools/make_test_sf2.py prova.sf2
           python3 tools/make_test_formats.py .
-          ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav prova.sf3 prova_sfz/prova.sfz
+          python3 tools/make_test_ysfc.py .
+          python3 tools/make_test_gm.py prova_gm.sf2
+          ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav prova.sf3 prova_sfz/prova.sfz prova_sfz/stile_maestro.sfz prova_montage.X7L prova_motif.X3W prova_moxf.X6W prova_gm.sf2
 
   mac:
     name: macOS universale
@@ -92,10 +94,10 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.${{ github.run_number }}
+          tag_name: v0.2.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          name: MBStudio91 Campione 0.1.${{ github.run_number }}
+          name: MBStudio91 Campione 0.2.${{ github.run_number }}
           body: |
             Compilato automaticamente da GitHub dal commit ${{ github.sha }}.
 
