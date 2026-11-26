@@ -290,7 +290,7 @@ Result convert (const juce::File& file)
             if (frames < 2 || kb.rate < 1000 || kb.rate > 384000) { ++damaged; continue; }
             const bool sameLength = ! stereo || left.size == right.size;
             totalFrames += (double) frames * (stereo ? 2 : 1);
-            if (totalFrames > 400.0e6) { res.notes.add ("libreria troppo grande: waveform oltre il limite di memoria saltate"); full = true; break; }
+            if (totalFrames > sf2::maxSampleValues) { res.notes.add ("libreria troppo grande: waveform oltre il limite di memoria saltate"); full = true; break; }
 
             auto addChannel = [&] (const Item& it, const juce::String& suffix)
             {

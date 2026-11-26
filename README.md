@@ -23,6 +23,10 @@ Campione non contiene suoni: si carica un proprio file con **LOAD** oppure trasc
 
 Ci sono quattro banchi, **A B C D**, sotto il nome del prodotto. Ognuno ha il suo SoundFont e il suo preset: si sceglie il banco con il tasto, poi LOAD (o il trascinamento) carica il file in quel banco. Il LED blu indica il banco che suona; i banchi vuoti hanno la scritta spenta. Il cambio è istantaneo: tutti i file restano in memoria, e una nota partita in un banco finisce nel suo banco anche se nel frattempo si è passati a un altro. Pedali, pitch bend, CC 7, 10, 11, 120 e 123 arrivano a tutti i banchi; Program Change e scelta del banco MIDI (CC 0 e 32) solo a quello attivo. Pedali e mezzo pedale valgono per tutti i banchi. Il banco è anche un parametro (BANK), quindi si automatizza dalla DAW o si assegna con LEARN a un tasto o a una manopola del controller.
 
+### SFZ grandi (Maestro Concert Grand e simili)
+
+Campione legge gli SFZ scritti come quelli di sfzinstruments: `#define` e `#include` anche in mezzo a una riga, percorsi degli `#include` dalla cartella dello SFZ principale, nomi dei campioni composti da variabili (`$ART_$DYN_$KEY.$EXT`). Le regioni suonate da un controller (rumori di pedale e coperchio) e quelle di rilascio vengono saltate. Un pianoforte come il Maestro Concert Grand (88 tasti, 5 dinamiche, circa 470 milioni di valori a 16 bit) si carica intero; servono circa 4,5 GB di memoria e qualche secondo di attesa al caricamento.
+
 ### SoundFont multibanco GM e XG
 
 Un SoundFont General MIDI, GS o XG (per esempio GeneralUser GS, FluidR3 GM o un banco XG) si carica come gli altri. Con il tasto **GM/XG** acceso, accanto ai banchi, Campione funziona come un modulo GM a 16 canali:

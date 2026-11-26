@@ -30,7 +30,7 @@ jobs:
           python3 tools/make_test_formats.py .
           python3 tools/make_test_ysfc.py .
           python3 tools/make_test_gm.py prova_gm.sf2
-          ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav prova.sf3 prova_sfz/prova.sfz prova_montage.X7L prova_motif.X3W prova_moxf.X6W prova_gm.sf2
+          ./build/campione_render_artefacts/Release/campione_render prova.sf2 accordo.wav prova.sf3 prova_sfz/prova.sfz prova_sfz/stile_maestro.sfz prova_montage.X7L prova_motif.X3W prova_moxf.X6W prova_gm.sf2
 
   mac:
     name: macOS universale

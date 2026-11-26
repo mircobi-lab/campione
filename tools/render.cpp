@@ -47,6 +47,16 @@ float rms (const juce::AudioBuffer<float>& b, double from, double to)
 }
 
 // frequenza dai passaggi per lo zero (sale), sulla finestra indicata
+void writeWav (const juce::AudioBuffer<float>& b, const juce::File& out)
+{
+    out.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> os (out.createOutputStream().release());
+    if (os != nullptr)
+        if (auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (sr).withNumChannels (2).withBitsPerSample (24)))
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+}
+
 double pitch (const juce::AudioBuffer<float>& b, double from, double to)
 {
     const auto* d = b.getReadPointer (0);
@@ -68,7 +78,24 @@ int main (int argc, char* argv[])
     juce::String err;
     const bool ok = e.loadFile (juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]), err);
     check (ok, "caricamento " + juce::String (argv[1]) + (ok ? "" : " (" + err + ")"));
+    for (auto& n : e.lastLoadNotes()) std::cout << "    nota: " << n << "\n";
     if (! ok) return 1;
+    // CAMPIONE_NOTE=69 CAMPIONE_NOTE_WAV=nota.wav: registra solo una nota (per analizzare un suono vero) ed esce
+    if (auto* nn = std::getenv ("CAMPIONE_NOTE"); nn != nullptr)
+    {
+        const int note = juce::String (nn).getIntValue();
+        const float vel = std::getenv ("CAMPIONE_VEL") != nullptr ? juce::String (std::getenv ("CAMPIONE_VEL")).getFloatValue() / 127.f : .8f;
+        const auto buf = play (e, { { 0.0, juce::MidiMessage::noteOn (1, note, vel) }, { 1.5, off (note) } }, 2.5);
+        if (std::getenv ("CAMPIONE_VEL") != nullptr)
+            for (int v : { 15, 45, 75, 100, 120 })
+            {
+                const auto b2 = play (e, { { 0.0, juce::MidiMessage::noteOn (1, note, (juce::uint8) v) }, { .8, off (note) } }, 1.0);
+                std::cout << "    velocity " << v << ": RMS " << b2.getRMSLevel (0, 0, (int) (.5 * sr)) << "\n";
+            }
+        if (auto* w = std::getenv ("CAMPIONE_NOTE_WAV")) writeWav (buf, juce::File::getCurrentWorkingDirectory().getChildFile (w));
+        std::cout << "    nota " << note << ": " << pitch (buf, .1, .6) << " Hz (misura per zeri)\n";
+        return 0;
+    }
     e.prepare (sr, block);
     for (auto& p : e.presets()) std::cout << "    " << juce::String (p.bank).paddedLeft ('0', 3) << ":" << juce::String (p.number).paddedLeft ('0', 3) << "  " << p.name << std::endl;
     check (e.currentPreset() >= 0, "preset iniziale (banco 0, programma 0 se esiste)");
@@ -287,7 +314,8 @@ int main (int argc, char* argv[])
             check (rms (hi, 1.0, 1.4) > rms (hi, .1, .4) * .5f, "sfz: il loop continua oltre la fine del campione");
             check (hi.getRMSLevel (0, (int) (.1 * sr), (int) (.3 * sr)) > hi.getRMSLevel (1, (int) (.1 * sr), (int) (.3 * sr)) * 1.1f,
                    "sfz: campione stereo, canale sinistro più forte come nel file");
-            check (x.lastLoadNotes().joinIntoString (" ").contains ("1 regioni saltate"), "sfz: la regione trigger=release viene saltata");
+            check (x.lastLoadNotes().joinIntoString (" ").contains ("1 regioni saltate"), file.getFileName() + ": la regione di rilascio o del pedale viene saltata");
+            check (! x.lastLoadNotes().joinIntoString (" ").contains ("non trovato"), file.getFileName() + ": tutti gli #include e i campioni trovati");
         }
         else
         {

@@ -1,5 +1,6 @@
 #include "Sf2Builder.h"
 #include <cmath>
+#include <cstring>
 
 namespace campione::sf2
 {
@@ -55,9 +56,9 @@ void addOffset (std::vector<Gen>& gens, int fineOp, int coarseOp, int offset)
 
 int Builder::addSample (const juce::String& name, const int16_t* data, int frames, int rate)
 {
-    const auto start = (juce::uint32) (smpl.getDataSize() / 2);
-    smpl.write (data, (size_t) frames * 2);
-    for (int i = 0; i < 46; ++i) smpl.writeShort (0);   // regola SF2: 46 zeri dopo ogni campione
+    const auto start = (juce::uint32) (smpl->getDataSize() / 2);
+    smpl->write (data, (size_t) frames * 2);
+    for (int i = 0; i < 46; ++i) smpl->writeShort (0);   // regola SF2: 46 zeri dopo ogni campione
     headers.push_back ({ name, start, start + (juce::uint32) frames, rate, 0, 1 });
     return (int) headers.size() - 1;
 }
@@ -94,7 +95,7 @@ int Builder::zoneCount() const noexcept
     return n;
 }
 
-juce::MemoryBlock Builder::build (const juce::String& bankName) const
+juce::MemoryBlock Builder::build (const juce::String& bankName)
 {
     Writer phdr, pbag, pmod, pgen, inst, ibag, imod, igen, sh;
 
@@ -142,15 +143,29 @@ juce::MemoryBlock Builder::build (const juce::String& bankName) const
 
     const auto info = list ("INFO", { chunk ("ifil", ifil.getMemoryBlock()), chunk ("isng", isng.getMemoryBlock()),
                                       chunk ("INAM", inam.getMemoryBlock()), chunk ("ISFT", isft.getMemoryBlock()) });
-    const auto sdta = list ("sdta", { chunk ("smpl", smpl.getMemoryBlock()) });
     const auto pdta = list ("pdta", { chunk ("phdr", phdr.os.getMemoryBlock()), chunk ("pbag", pbag.os.getMemoryBlock()),
                                       chunk ("pmod", pmod.os.getMemoryBlock()), chunk ("pgen", pgen.os.getMemoryBlock()),
                                       chunk ("inst", inst.os.getMemoryBlock()), chunk ("ibag", ibag.os.getMemoryBlock()),
                                       chunk ("imod", imod.os.getMemoryBlock()), chunk ("igen", igen.os.getMemoryBlock()),
                                       chunk ("shdr", sh.os.getMemoryBlock()) });
-    juce::MemoryOutputStream body;
-    body.write ("sfbk", 4);
-    for (auto* b : { &info, &sdta, &pdta }) body.write (b->getData(), b->getSize());
-    return chunk ("RIFF", body.getMemoryBlock());
+
+    // RIFF sfbk = INFO + LIST sdta (smpl) + pdta, scritto direttamente nel blocco finale
+    const size_t samplesSize = smpl->getDataSize();   // sempre pari (campioni a 16 bit)
+    const size_t sdtaSize = 4 + 8 + samplesSize;     // "sdta" + intestazione smpl + dati
+    const size_t total = 8 + 4 + info.getSize() + 8 + sdtaSize + pdta.getSize();
+    juce::MemoryBlock out (total);
+    auto* d = (char*) out.getData();
+    size_t pos = 0;
+    auto put = [&] (const void* src, size_t n) { std::memcpy (d + pos, src, n); pos += n; };
+    auto put32 = [&] (size_t v) { const auto le = juce::ByteOrder::swapIfBigEndian ((juce::uint32) v); put (&le, 4); };
+    put ("RIFF", 4); put32 (total - 8); put ("sfbk", 4);
+    put (info.getData(), info.getSize());
+    put ("LIST", 4); put32 (sdtaSize); put ("sdta", 4);
+    put ("smpl", 4); put32 (samplesSize);
+    put (smpl->getData(), samplesSize);
+    put (pdta.getData(), pdta.getSize());
+    jassert (pos == total);
+    smpl = std::make_unique<juce::MemoryOutputStream>();   // libera subito la memoria dei campioni
+    return out;
 }
 }

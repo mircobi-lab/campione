@@ -104,4 +104,35 @@ open(os.path.join(d, "prova.sfz"), "w").write(f"""// prova di Campione: commenti
 <group> trigger=release
 <region> sample=rilascio.wav lokey=0 hikey=127
 """)
-print("scritti", os.path.join(out, "prova.sf3"), "e", os.path.join(d, "prova.sfz"))
+# SFZ scritto come il Maestro Concert Grand: #define e #include in mezzo alla riga, percorsi degli #include
+# dalla cartella dello SFZ principale anche dentro Data/, nome del campione composto da variabili,
+# e una regione del pedale (key -1, suonata dal CC 64) che non deve finire sulla tastiera
+os.makedirs(os.path.join(d, "Data"), exist_ok=True)
+write_wav(os.path.join(d, "campioni", "reg_mf_069.wav"), [piano])
+write_wav(os.path.join(d, "campioni", "reg_mf_070.wav"), [organ, [int(v * .8) for v in organ]])
+open(os.path.join(d, "stile_maestro.sfz"), "w").write("""#define $EXT wav
+<control>
+default_path=campioni/
+<global> ampeg_release=0.3
+<master>
+#include "Data/gruppi.txt"
+<global>
+lokey=-1
+hikey=-1
+#include "Data/effetti.txt"
+""")
+open(os.path.join(d, "Data", "gruppi.txt"), "w").write("""#define $ART reg
+<group> lovel=1 hivel=127
+#define $DYN mf
+#include "Data/regioni.txt"
+""")
+open(os.path.join(d, "Data", "regioni.txt"), "w").write(f"""<region> #define $KEY 069 #include "Data/campione.txt" lokey=0 hikey=63 pitch_keycenter=69
+<region> #define $KEY 070 #include "Data/campione.txt" lokey=e4 hikey=127 pitch_keycenter=a4 loop_mode=loop_continuous loop_start={len(organ) - 2000} loop_end={len(organ) - 1001}
+""")
+open(os.path.join(d, "Data", "campione.txt"), "w").write("""sample=$ART_$DYN_$KEY.$EXT
+region_label=$KEY
+""")
+open(os.path.join(d, "Data", "effetti.txt"), "w").write("""<group> on_locc64=127
+<region> sample=rilascio.wav
+""")
+print("scritti", os.path.join(out, "prova.sf3"), ",", os.path.join(d, "prova.sfz"), "e", os.path.join(d, "stile_maestro.sfz"))

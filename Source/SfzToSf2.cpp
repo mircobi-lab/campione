@@ -26,37 +26,58 @@ juce::String stripComments (const juce::String& text)
     return out;
 }
 
-// #include e #define (le variabili $NOME si sostituiscono nel testo)
-juce::String preprocess (const juce::File& file, std::map<juce::String, juce::String>& defines, int depth, juce::StringArray& notes)
+// #include e #define, anche in mezzo a una riga ("<region> #define $KEY 021 ... #include \"x.txt\""), nell'ordine
+// in cui compaiono: le variabili $NOME si sostituiscono con il valore che hanno in quel punto.
+// I percorsi degli #include partono dalla cartella dello SFZ principale (come in sfizz e ARIA);
+// se lì il file non c'è, dalla cartella del file che lo include.
+juce::String substitute (juce::String text, const std::map<juce::String, juce::String>& defines)
+{
+    if (! text.containsChar ('$')) return text;
+    // le variabili più lunghe prima, così $VEL non rovina $VELOCITY
+    std::vector<juce::String> keys;
+    for (auto& d : defines) keys.push_back (d.first);
+    std::sort (keys.begin(), keys.end(), [] (auto& a, auto& b) { return a.length() > b.length(); });
+    for (auto& k : keys) text = text.replace (k, defines.at (k));
+    return text;
+}
+
+juce::String preprocess (const juce::File& file, const juce::File& rootDir, std::map<juce::String, juce::String>& defines, int depth, juce::StringArray& notes)
 {
     if (depth > 8) { notes.add ("#include troppo annidati in " + file.getFileName()); return {}; }
     const auto lines = juce::StringArray::fromLines (stripComments (file.loadFileAsString()));
     juce::String out;
     for (auto line : lines)
     {
-        const auto t = line.trim();
-        if (t.startsWith ("#define"))
+        for (;;)
         {
-            auto rest = t.substring (7).trim();
-            const auto name = rest.upToFirstOccurrenceOf (" ", false, false).trim();
-            const auto value = rest.fromFirstOccurrenceOf (" ", false, false).trim();
-            if (name.startsWith ("$")) defines[name] = value;
-            continue;
+            const int d = line.indexOf ("#define"), i = line.indexOf ("#include");
+            const int at = d < 0 ? i : (i < 0 ? d : juce::jmin (d, i));
+            if (at < 0) { out << substitute (line, defines) << "\n"; break; }
+            out << substitute (line.substring (0, at), defines) << "\n";
+            auto rest = line.substring (at);
+            if (at == d)
+            {
+                // #define $NOME valore (il valore è una sola parola)
+                auto t = rest.substring (7).trimStart();
+                const auto name = t.upToFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf ("\t", false, false);
+                t = t.substring (name.length()).trimStart();
+                auto value = t.upToFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf ("\t", false, false);
+                line = t.substring (value.length());
+                if (name.startsWith ("$")) defines[name] = substitute (value, defines);
+            }
+            else
+            {
+                // #include "percorso"
+                const auto q1 = rest.indexOfChar ('"'), q2 = q1 >= 0 ? rest.indexOfChar (q1 + 1, '"') : -1;
+                if (q1 < 0 || q2 < 0) { line = rest.substring (8); continue; }
+                const auto name = substitute (rest.substring (q1 + 1, q2), defines).replaceCharacter ('\\', '/');
+                line = rest.substring (q2 + 1);
+                auto inc = rootDir.getChildFile (name);
+                if (! inc.existsAsFile()) inc = file.getParentDirectory().getChildFile (name);
+                if (inc.existsAsFile()) out << preprocess (inc, rootDir, defines, depth + 1, notes) << "\n";
+                else notes.addIfNotAlreadyThere ("#include non trovato: " + name);
+            }
         }
-        if (t.startsWith ("#include"))
-        {
-            const auto name = t.fromFirstOccurrenceOf ("\"", false, false).upToLastOccurrenceOf ("\"", false, false).replaceCharacter ('\\', '/');
-            const auto inc = file.getParentDirectory().getChildFile (name);
-            if (inc.existsAsFile()) out << preprocess (inc, defines, depth + 1, notes) << "\n";
-            else notes.add ("#include non trovato: " + name);
-            continue;
-        }
-        // le variabili più lunghe prima, così $VEL non rovina $VELOCITY
-        std::vector<juce::String> keys;
-        for (auto& d : defines) keys.push_back (d.first);
-        std::sort (keys.begin(), keys.end(), [] (auto& a, auto& b) { return a.length() > b.length(); });
-        for (auto& k : keys) line = line.replace (k, defines[k]);
-        out << line << "\n";
     }
     return out;
 }
@@ -150,7 +171,7 @@ Result convert (const juce::File& sfzFile)
 {
     Result res;
     std::map<juce::String, juce::String> defines;
-    auto sections = parse (preprocess (sfzFile, defines, 0, res.notes));
+    auto sections = parse (preprocess (sfzFile, sfzFile.getParentDirectory(), defines, 0, res.notes));
 
     // ereditarietà: control -> global -> master -> group -> region
     Opcodes control, global, master, group;
@@ -197,7 +218,7 @@ Result convert (const juce::File& sfzFile)
         if (rd == nullptr) { res.notes.addIfNotAlreadyThere ("campione non trovato o non leggibile: " + path); sampleIndex[key] = -1; return -1; }
         const auto len = (int) juce::jmin<juce::int64> (rd->lengthInSamples, 60 * 192000);
         totalFrames += (double) len * juce::jmin (2, (int) rd->numChannels);
-        if (totalFrames > 400.0e6) { res.notes.addIfNotAlreadyThere ("libreria troppo grande: campioni oltre il limite di memoria saltati"); sampleIndex[key] = -1; return -1; }
+        if (totalFrames > sf2::maxSampleValues) { res.notes.addIfNotAlreadyThere ("libreria troppo grande: campioni oltre il limite di memoria saltati"); sampleIndex[key] = -1; return -1; }
         Sample s;
         s.channels = juce::jmin (2, (int) rd->numChannels);
         s.rate = (int) std::lround (rd->sampleRate);
@@ -232,6 +253,10 @@ Result convert (const juce::File& sfzFile)
 
         if (get ("trigger", "attack") != "attack" && get ("trigger") != "first" && get ("trigger") != "legato") { ++res.skipped; continue; }
         if ((int) num ("seq_position", 1) > 1 || num ("lorand", 0) > 0) { ++res.skipped; continue; }
+        // regioni suonate da un controller (rumore del pedale, coperchio...) o senza tasto (key=-1): non sono note
+        bool ccTriggered = false;
+        for (auto& kv : o) if (kv.first.startsWith ("on_locc") || kv.first.startsWith ("on_hicc") || kv.first.startsWith ("start_locc") || kv.first.startsWith ("start_hicc")) ccTriggered = true;
+        if (ccTriggered || get ("key").trim() == "-1" || get ("hikey").trim() == "-1") { ++res.skipped; continue; }
         if (get ("sw_last").isNotEmpty() && swDefault >= 0 && noteNumber (get ("sw_last")) != swDefault) { ++res.skipped; continue; }
         const auto smp = get ("sample");
         if (smp.isEmpty() || smp.startsWith ("*")) { ++res.skipped; continue; }   // generatori interni (*sine, *noise) non supportati
@@ -305,17 +330,23 @@ Result convert (const juce::File& sfzFile)
 
     // ---- SoundFont: un preset, uno strumento, una zona per regione e canale
     sf2::Builder out;
+    {
+        size_t bytes = 0;
+        for (auto& s : samples) for (int ch = 0; ch < s.channels; ++ch) bytes += 2 * (s.data[ch].size() + 46);
+        out.reserve (bytes);
+    }
     std::map<std::pair<int, int>, int> sampleID;
+    res.samples = (int) samples.size();
     for (int si = 0; si < (int) samples.size(); ++si)
     {
-        const auto& s = samples[(size_t) si];
+        auto& s = samples[(size_t) si];
         if (s.data[0].empty()) continue;
         for (int ch = 0; ch < s.channels; ++ch)
             sampleID[{ si, ch }] = out.addSample ("S" + juce::String (si) + (s.channels == 2 ? (ch == 0 ? "L" : "R") : ""),
                                                   s.data[ch].data(), (int) s.data[ch].size(), s.rate);
         if (s.channels == 2) out.linkStereo (sampleID[{ si, 0 }], sampleID[{ si, 1 }]);
+        for (auto& d : s.data) std::vector<int16_t>().swap (d);   // copiato nel SoundFont: si libera subito
     }
-    res.samples = (int) samples.size();
     if (out.sampleBytes() > 1.9e9) { res.error = "SFZ TOO LARGE"; return res; }
 
     const auto presetName = sfzFile.getFileNameWithoutExtension();
